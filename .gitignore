@@ -1,0 +1,26 @@
+# Private project configs — contain server paths, Discord channel IDs, etc.
+# Keep example.yaml in source control; exclude everything else.
+projects/*.yaml
+!projects/example.yaml
+
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Data directory — activity logs, etc. (runtime state, not source)
+data/
+
+# Contributor profiles — private, per-developer context for the agent
+humans/
+!humans/template.md
+
+# Claude Code local session state (permissions, tool approvals)
+.claude/

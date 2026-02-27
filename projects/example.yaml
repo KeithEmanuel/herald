@@ -1,0 +1,73 @@
+# Herald project config — example / template
+#
+# Copy this file to projects/<yourproject>.yaml and fill it in.
+# All projects/*.yaml files are gitignored except this one.
+#
+# Required fields: name, display_name, path, discord_channel_id
+
+name: myproject
+display_name: "My Project (AgentName)"
+
+# Absolute path to the project repo inside the Herald container.
+# Set via bind mount in compose.yaml — e.g.:
+#   volumes:
+#     - /home/me/myproject:/repos/myproject:rw
+path: /repos/myproject
+
+# Discord channel ID for this project.
+# How to find it: right-click a channel in Discord → "Copy Channel ID"
+# (requires Developer Mode: User Settings → Advanced → Developer Mode)
+discord_channel_id: "YOUR_CHANNEL_ID_HERE"
+
+git:
+  # If true, the Claude agent may commit locally during a run.
+  # Commits are always local until the owner approves a push via Discord reaction.
+  auto_commit: true
+
+  # If true, Herald posts a push-approval request before any git push.
+  # Owner reacts 👍 to push or 👎 to discard the branch.
+  push_requires_approval: true
+
+  # All agent commits go to branches with this prefix.
+  # Example result: agent/myproject-20260224-080000
+  branch_prefix: "agent/"
+
+# Docker deployment config. Optional — omit if you don't want Herald to manage deploys.
+#
+# Herald deploys by running: docker compose -f <compose_path> up --build -d
+# The Docker socket must be mounted in Herald's container (see Herald's compose.yaml).
+#
+# Project containers communicate with Caddy via a shared external Docker network (caddy_net).
+# Create it once on the host: docker network create caddy_net
+# Then add your project service to it in the project's own compose.yaml.
+#
+# For a template project compose.yaml, see docs/deploy-template.yaml (coming soon).
+deploy:
+  # Absolute path to this project's docker-compose file on the host.
+  # Omit or leave null to disable Herald-managed deployment.
+  compose_path: null  # e.g. /mnt/lvm-nvme/herald/deployments/myproject/compose.yaml
+
+  # If true, Herald automatically triggers a deploy after you approve a git push (👍).
+  # If false (default), use !deploy myproject to deploy manually.
+  auto_deploy_on_push: false
+
+# Cron-triggered tasks. List as many as you want.
+# Cron format: minute hour day-of-month month day-of-week (5 fields)
+# Multiple projects with the same cron time are staggered by 15 minutes automatically.
+schedule:
+  # Daily reflection — reads SOUL.md and memory, writes a journal entry
+  - cron: "0 8 * * *"
+    task: >
+      Read SOUL.md and memory/MEMORY.md. Write a brief journal entry noting
+      project status, any open questions, and anything that looks inconsistent
+      or needs attention. Update SOUL.md Core Memories if anything is worth
+      remembering long-term. Update memory/MEMORY.md if project status has changed.
+      Keep the journal entry under 200 words and post it as your response.
+
+  # Weekly blog post — uncomment and adjust to enable
+  # - cron: "0 9 * * 1"
+  #   task: >
+  #     Write a short blog post (300-500 words) about the past week's work on this project.
+  #     What shipped, what didn't, what you learned, what surprised you.
+  #     Save it as blog/YYYY-MM-DD-weekly.md (create the blog/ directory if it doesn't exist).
+  #     Commit it to the current agent branch.

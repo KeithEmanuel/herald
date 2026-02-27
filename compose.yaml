@@ -1,0 +1,58 @@
+# Herald — compose.yaml
+#
+# Herald runs as an independent service, separate from your main docker stack.
+# It manages project containers via the Docker socket.
+#
+# First-time setup on the host:
+#   docker network create caddy_net   # shared network for Caddy + project containers
+#
+# Usage:
+#   cd /mnt/lvm-nvme/herald && docker compose up -d
+#   docker compose logs -f herald
+
+services:
+  herald:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      # Project registry lives in ./projects/ alongside this file (gitignored YAMLs)
+      HERALD_PROJECTS_DIR: /herald/projects
+      # ANTHROPIC_API_KEY and DISCORD_TOKEN come from .env
+    restart: unless-stopped
+    volumes:
+      # Project registry — private YAML configs, not in the Herald git repo
+      - ./projects:/herald/projects:ro
+
+      # Docker socket — Herald uses this to run `docker compose up --build -d`
+      # for project containers. This grants Herald full control over host Docker.
+      # Required for !deploy and auto_deploy_on_push to work.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # Project deployment stacks — mounted at the SAME absolute path as the host.
+      # The Docker daemon resolves paths in compose files from the host perspective,
+      # so the path inside this container must match what's on disk on the host.
+      - /mnt/lvm-nvme/herald/deployments:/mnt/lvm-nvme/herald/deployments:rw
+
+      # Activity data — persists accountability tracking across container restarts.
+      # Without this, the inactivity clock resets every time Herald restarts.
+      - herald_data:/app/data
+
+      # Git credentials — needed if agents push to remote repos (GitHub releases, etc.)
+      # Bind-mounting ~/.gitconfig and ~/.ssh is the simplest approach.
+      - ~/.gitconfig:/root/.gitconfig:ro
+      - ~/.ssh:/root/.ssh:ro
+
+      # Claude Code authentication — persists login across container restarts.
+      - herald_claude_config:/root/.config/claude
+
+      # Claude Code auto-memory — persists agent memory files across container restarts.
+      # SOUL.md in each project repo is the primary memory; this is supplementary.
+      - herald_claude_memory:/root/.claude
+
+volumes:
+  herald_data:
+  herald_claude_config:
+  herald_claude_memory:
