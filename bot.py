@@ -37,7 +37,7 @@ THUMBS_UP = "👍"
 THUMBS_DOWN = "👎"
 
 
-class HeraldCommands(commands.Cog):
+class HeraldCommands(commands.Cog, name="Herald"):
     """
     Discord commands for Herald. Registered as a Cog so discord.py properly
     discovers and routes them — commands on a Bot subclass aren't auto-registered
@@ -193,9 +193,12 @@ class HeraldBot(commands.Bot):
         # Register commands — discord.py 2.x requires commands to be in a Cog;
         # methods on the Bot subclass itself are not auto-discovered.
         await self.add_cog(HeraldCommands(self))
+        log.info("HeraldCommands cog registered — commands: %s", list(self.all_commands.keys()))
 
         # Queue worker — runs forever, consuming tasks one at a time
-        self.loop.create_task(
+        # Use asyncio.get_event_loop() — self.loop is deprecated in discord.py 2.x
+        import asyncio
+        asyncio.get_event_loop().create_task(
             self.task_queue.worker(self.projects, run_agent),
             name="herald-queue-worker",
         )
@@ -228,7 +231,8 @@ class HeraldBot(commands.Bot):
                 n = len(self.projects)
                 project_list = f": {project_names}" if self.projects else ""
                 await channel.send(
-                    f"Herald online — {n} project(s) loaded{project_list}"
+                    f"Herald online — {n} project(s) loaded{project_list}\n"
+                    f"Type `!help` for available commands."
                 )
 
         # Check that each project has a SOUL.md — a project without a soul is just files.
