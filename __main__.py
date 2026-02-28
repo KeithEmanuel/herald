@@ -57,8 +57,19 @@ def main() -> None:
             "Set it in .env to restrict approvals to the operator."
         )
 
-    log.info("Starting Herald — projects dir: %s", projects_dir)
-    bot = HeraldBot(projects_dir, operator_id=operator_id)
+    # HERALD_ROOT is the deployment root — used to find repos/ for !addproject cloning.
+    # In the container, HERALD_ROOT is passed via compose.yaml environment, matching the
+    # host path (same-path invariant: repos are mounted at the same absolute path on both sides).
+    herald_root_str = os.environ.get("HERALD_ROOT")
+    herald_root = Path(herald_root_str) if herald_root_str else None
+    if herald_root is None:
+        log.warning(
+            "HERALD_ROOT is not set — !addproject will guess repos/ location from projects/ parent. "
+            "Set HERALD_ROOT in .env to ensure correct path."
+        )
+
+    log.info("Starting Herald — projects dir: %s, herald root: %s", projects_dir, herald_root or "(unset)")
+    bot = HeraldBot(projects_dir, herald_root=herald_root, operator_id=operator_id)
 
     # bot.run() starts the event loop and blocks until the bot disconnects
     bot.run(token)

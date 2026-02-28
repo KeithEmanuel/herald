@@ -353,7 +353,7 @@ class HeraldBot(commands.Bot):
       3. on_ready: log that we're online
     """
 
-    def __init__(self, projects_dir: Path, operator_id: int | None = None):
+    def __init__(self, projects_dir: Path, herald_root: Path | None = None, operator_id: int | None = None):
         intents = discord.Intents.default()
         # message_content: needed to read the content of !commands
         intents.message_content = True
@@ -366,9 +366,10 @@ class HeraldBot(commands.Bot):
         self.task_queue = TaskQueue()
 
         # Stored for !addproject: writing new project YAMLs and cloning repos.
-        # repos_dir follows the HERALD_ROOT layout convention: projects/../repos/
+        # repos_dir uses HERALD_ROOT if available (passed via compose.yaml environment),
+        # falling back to the projects/ parent directory as a best-guess default.
         self.projects_dir = projects_dir
-        self.repos_dir = projects_dir.parent / "repos"
+        self.repos_dir = (herald_root if herald_root else projects_dir.parent) / "repos"
 
         # If set, only this Discord user ID can approve/discard push proposals.
         # Sourced from HERALD_OPERATOR_ID env var. None = any server member (not recommended).

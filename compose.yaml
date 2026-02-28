@@ -45,6 +45,10 @@ services:
       # Projects registry is always at /herald/projects inside the container.
       # Bind-mounted from ./projects (relative to this file) — see volumes below.
       HERALD_PROJECTS_DIR: /herald/projects
+      # HERALD_ROOT is passed through so Herald knows where repos/ lives inside the container.
+      # repos/ is bind-mounted at the same absolute path (same-path invariant), so this
+      # matches the host path and lets !addproject clone to the right place.
+      HERALD_ROOT: ${HERALD_ROOT}
       # ANTHROPIC_API_KEY and DISCORD_TOKEN come from .env
     restart: unless-stopped
     networks:
