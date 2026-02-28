@@ -37,13 +37,124 @@ THUMBS_UP = "👍"
 THUMBS_DOWN = "👎"
 
 
+class HeraldCommands(commands.Cog):
+    """
+    Discord commands for Herald. Registered as a Cog so discord.py properly
+    discovers and routes them — commands on a Bot subclass aren't auto-registered
+    in discord.py 2.x.
+    """
+
+    def __init__(self, bot: "HeraldBot") -> None:
+        self.bot = bot
+
+    # -------------------------------------------------------------------------
+    # Commands
+    # -------------------------------------------------------------------------
+
+    @commands.command(name="run")
+    async def cmd_run(self, ctx: commands.Context, project: str, *, task: str) -> None:
+        """
+        !run <project> <task>
+
+        Trigger a one-off agent run. The agent runs asynchronously — Herald posts the
+        result when it's done, which could be several minutes later.
+        """
+        if project not in self.bot.projects:
+            await ctx.send(
+                f"Unknown project `{project}`. Try `!projects` to see registered projects."
+            )
+            return
+
+        # Acknowledge immediately — the user shouldn't wonder if it worked
+        await ctx.send(f"Queued task for `{project}` (position {self.bot.task_queue.depth + 1}). I'll reply here when done.")
+
+        async def on_complete(output: str) -> None:
+            body = truncate_for_discord(output)
+            await ctx.send(f"**Agent run complete** `[{project}]`\n```\n{body}\n```")
+            # After each run, check for unpushed agent branches and propose a push if needed
+            await self.bot._check_and_propose_push(project, ctx.channel)
+
+        self.bot.task_queue.enqueue(AgentTask(
+            project_name=project,
+            task=task,
+            on_complete=on_complete,
+        ))
+
+    @commands.command(name="status")
+    async def cmd_status(self, ctx: commands.Context) -> None:
+        """!status — show queue depth and currently running job."""
+        current = self.bot.task_queue.current
+        depth = self.bot.task_queue.depth
+
+        if current is None and depth == 0:
+            await ctx.send("Herald is idle — queue is empty.")
+            return
+
+        lines = []
+        if current:
+            lines.append(f"**Running:** `[{current.project_name}]` {current.label}")
+        if depth > 0:
+            lines.append(f"**Queued:** {depth} task(s) waiting")
+
+        await ctx.send("\n".join(lines))
+
+    @commands.command(name="projects")
+    async def cmd_projects(self, ctx: commands.Context) -> None:
+        """!projects — list registered projects."""
+        if not self.bot.projects:
+            await ctx.send("No projects registered. Drop a YAML file in the projects/ directory.")
+            return
+
+        lines = ["**Registered projects:**"]
+        for name, project in self.bot.projects.items():
+            channel = self.bot.get_channel(int(project.discord_channel_id))
+            channel_mention = channel.mention if channel else f"#{project.discord_channel_id}"
+            schedule_count = len(project.schedule)
+            lines.append(
+                f"• `{name}` — {project.display_name} | channel: {channel_mention} | "
+                f"{schedule_count} scheduled task(s)"
+            )
+
+        await ctx.send("\n".join(lines))
+
+    @commands.command(name="deploy")
+    async def cmd_deploy(self, ctx: commands.Context, project: str) -> None:
+        """
+        !deploy <project>
+
+        Build and deploy the project's Docker container via `docker compose up --build -d`.
+        Runs through the serial queue so it won't overlap with an active agent run.
+
+        Requires deploy.compose_path to be set in the project's YAML config.
+        """
+        if project not in self.bot.projects:
+            await ctx.send(
+                f"Unknown project `{project}`. Try `!projects` to see registered projects."
+            )
+            return
+
+        project_config = self.bot.projects[project]
+        if not project_config.deploy.compose_path:
+            await ctx.send(
+                f"`{project}` has no deploy config. "
+                f"Add `deploy.compose_path` to `projects/{project}.yaml`."
+            )
+            return
+
+        await ctx.send(
+            f"Deploy queued for `{project}` (position {self.bot.task_queue.depth + 1}). "
+            f"I'll post output when done."
+        )
+        await self.bot._enqueue_deploy(project, ctx.channel)
+
+
 class HeraldBot(commands.Bot):
     """
     The main Herald Discord bot.
 
     Lifecycle:
       1. __init__: set up state and intents
-      2. setup_hook: start background tasks (queue worker, scheduler) — runs before on_ready
+      2. setup_hook: register Cog, start background tasks (queue worker, scheduler)
       3. on_ready: log that we're online
     """
 
@@ -79,6 +190,10 @@ class HeraldBot(commands.Bot):
         We start the queue worker and scheduler here (not in on_ready) so they're
         running before we receive any messages.
         """
+        # Register commands — discord.py 2.x requires commands to be in a Cog;
+        # methods on the Bot subclass itself are not auto-discovered.
+        await self.add_cog(HeraldCommands(self))
+
         # Queue worker — runs forever, consuming tasks one at a time
         self.loop.create_task(
             self.task_queue.worker(self.projects, run_agent),
@@ -141,108 +256,6 @@ class HeraldBot(commands.Bot):
                         f"See `projects/example.yaml` for a suggested task prompt."
                     )
                     log.warning("Project '%s' is missing SOUL.md at %s", name, project.path)
-
-    # -------------------------------------------------------------------------
-    # Commands
-    # -------------------------------------------------------------------------
-
-    @commands.command(name="run")
-    async def cmd_run(self, ctx: commands.Context, project: str, *, task: str) -> None:
-        """
-        !run <project> <task>
-
-        Trigger a one-off agent run. The agent runs asynchronously — Herald posts the
-        result when it's done, which could be several minutes later.
-        """
-        if project not in self.projects:
-            await ctx.send(
-                f"Unknown project `{project}`. Try `!projects` to see registered projects."
-            )
-            return
-
-        # Acknowledge immediately — the user shouldn't wonder if it worked
-        await ctx.send(f"Queued task for `{project}` (position {self.task_queue.depth + 1}). I'll reply here when done.")
-
-        channel_id = ctx.channel.id
-
-        async def on_complete(output: str) -> None:
-            body = truncate_for_discord(output)
-            await ctx.send(f"**Agent run complete** `[{project}]`\n```\n{body}\n```")
-            # After each run, check for unpushed agent branches and propose a push if needed
-            await self._check_and_propose_push(project, ctx.channel)
-
-        self.task_queue.enqueue(AgentTask(
-            project_name=project,
-            task=task,
-            on_complete=on_complete,
-        ))
-
-    @commands.command(name="status")
-    async def cmd_status(self, ctx: commands.Context) -> None:
-        """!status — show queue depth and currently running job."""
-        current = self.task_queue.current
-        depth = self.task_queue.depth
-
-        if current is None and depth == 0:
-            await ctx.send("Herald is idle — queue is empty.")
-            return
-
-        lines = []
-        if current:
-            lines.append(f"**Running:** `[{current.project_name}]` {current.label}")
-        if depth > 0:
-            lines.append(f"**Queued:** {depth} task(s) waiting")
-
-        await ctx.send("\n".join(lines))
-
-    @commands.command(name="projects")
-    async def cmd_projects(self, ctx: commands.Context) -> None:
-        """!projects — list registered projects."""
-        if not self.projects:
-            await ctx.send("No projects registered. Drop a YAML file in the projects/ directory.")
-            return
-
-        lines = ["**Registered projects:**"]
-        for name, project in self.projects.items():
-            channel = self.get_channel(int(project.discord_channel_id))
-            channel_mention = channel.mention if channel else f"#{project.discord_channel_id}"
-            schedule_count = len(project.schedule)
-            lines.append(
-                f"• `{name}` — {project.display_name} | channel: {channel_mention} | "
-                f"{schedule_count} scheduled task(s)"
-            )
-
-        await ctx.send("\n".join(lines))
-
-    @commands.command(name="deploy")
-    async def cmd_deploy(self, ctx: commands.Context, project: str) -> None:
-        """
-        !deploy <project>
-
-        Build and deploy the project's Docker container via `docker compose up --build -d`.
-        Runs through the serial queue so it won't overlap with an active agent run.
-
-        Requires deploy.compose_path to be set in the project's YAML config.
-        """
-        if project not in self.projects:
-            await ctx.send(
-                f"Unknown project `{project}`. Try `!projects` to see registered projects."
-            )
-            return
-
-        project_config = self.projects[project]
-        if not project_config.deploy.compose_path:
-            await ctx.send(
-                f"`{project}` has no deploy config. "
-                f"Add `deploy.compose_path` to `projects/{project}.yaml`."
-            )
-            return
-
-        await ctx.send(
-            f"Deploy queued for `{project}` (position {self.task_queue.depth + 1}). "
-            f"I'll post output when done."
-        )
-        await self._enqueue_deploy(project, ctx.channel)
 
     # -------------------------------------------------------------------------
     # Git push-approval flow
@@ -385,11 +398,6 @@ class HeraldBot(commands.Bot):
             log.error("Cannot post to channel %d — not found (wrong ID or missing access?)", channel_id)
             return
         await channel.send(content)
-
-    async def on_message(self, message: discord.Message) -> None:
-        """Debug: log all incoming messages to diagnose intent delivery."""
-        log.info("MSG from %s in %s: %r", message.author, message.channel, message.content[:60])
-        await super().on_message(message)
 
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
         """Send a helpful error message instead of silently swallowing command errors."""
