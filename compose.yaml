@@ -3,11 +3,27 @@
 # Herald runs as an independent service, separate from your main docker stack.
 # It manages project containers via the Docker socket.
 #
+# Directory layout on the host (HERALD_ROOT = the dir containing this file):
+#
+#   HERALD_ROOT/
+#     compose.yaml             ← this file
+#     .env                     ← secrets (copy from repos/herald/.env.example)
+#     projects/                ← private YAML configs, written by !addproject
+#     repos/
+#       herald/                ← git clone of Herald source (what agents edit)
+#       <other-project>/       ← other project repos live here too
+#     deployments/             ← project docker compose stacks
+#       <project>/
+#         compose.yaml
+#
 # Setup:
-#   1. Copy .env.example to .env and fill in required values
-#   2. docker network create caddy_net   # shared network for Caddy + project containers
-#   3. docker compose up -d
-#   4. docker compose exec herald claude  # authenticate Claude Code (first time only)
+#   1. mkdir $HERALD_ROOT && cd $HERALD_ROOT
+#   2. git clone <herald-repo> repos/herald
+#   3. cp repos/herald/.env.example .env  # then fill in values
+#   4. mkdir -p projects deployments
+#   5. docker network create caddy_net    # shared network for Caddy + project containers
+#   6. docker compose up -d
+#   7. docker compose exec herald claude  # authenticate Claude Code (first time only)
 #
 # Usage:
 #   docker compose logs -f herald
@@ -16,12 +32,13 @@
 services:
   herald:
     build:
-      context: .
+      context: ./repos/herald
       dockerfile: Dockerfile
     env_file:
       - .env
     environment:
-      # Project registry lives in ./projects/ alongside this file (gitignored YAMLs)
+      # Projects registry is always at /herald/projects inside the container.
+      # Bind-mounted from ./projects (relative to this file) — see volumes below.
       HERALD_PROJECTS_DIR: /herald/projects
       # ANTHROPIC_API_KEY and DISCORD_TOKEN come from .env
     restart: unless-stopped
@@ -34,15 +51,11 @@ services:
       # Required for !deploy and auto_deploy_on_push to work.
       - /var/run/docker.sock:/var/run/docker.sock
 
-      # Project repos — mounted at the SAME absolute path as the host so agents
-      # can read/write them. Set HERALD_REPOS_ROOT in .env to your repos directory.
-      # The path must match on both sides — the Docker daemon resolves paths from
-      # the host perspective.
-      - ${HERALD_REPOS_ROOT:-/srv/repos}:${HERALD_REPOS_ROOT:-/srv/repos}:rw
-
-      # Project deployment stacks — same same-path requirement as above.
-      # Set HERALD_DEPLOYMENTS_DIR in .env to wherever you keep compose stacks.
-      - ${HERALD_DEPLOYMENTS_DIR:-/srv/herald/deployments}:${HERALD_DEPLOYMENTS_DIR:-/srv/herald/deployments}:rw
+      # Repos and deployments — mounted at the SAME absolute path as the host.
+      # The Docker daemon resolves compose file paths from the host perspective,
+      # so paths must match on both sides. HERALD_ROOT must be absolute in .env.
+      - ${HERALD_ROOT}/repos:${HERALD_ROOT}/repos:rw
+      - ${HERALD_ROOT}/deployments:${HERALD_ROOT}/deployments:rw
 
       # Activity data — persists accountability tracking across container restarts.
       # Without this, the inactivity clock resets every time Herald restarts.

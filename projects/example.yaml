@@ -9,9 +9,9 @@ name: myproject
 display_name: "My Project"
 
 # Absolute path to the project repo inside the Herald container.
-# Herald mounts a parent directory containing all your repos (e.g. /mnt/lvm-nvme).
+# Project repos live under HERALD_ROOT/repos/ and are mounted at the same path.
 # Use !addproject to register automatically — or fill this in manually.
-path: /mnt/lvm-nvme/myproject
+path: /srv/herald/repos/myproject
 
 # Discord channel ID for this project.
 # Created automatically by !addproject, or:
@@ -47,7 +47,7 @@ git:
 deploy:
   # Absolute path to this project's docker-compose file on the host.
   # Omit or leave null to disable Herald-managed deployment.
-  compose_path: null  # e.g. /mnt/lvm-nvme/herald/deployments/myproject/compose.yaml
+  compose_path: null  # e.g. /srv/herald/deployments/myproject/compose.yaml
 
   # If true, Herald automatically triggers a deploy after you approve a git push (👍).
   # If false (default), use !deploy myproject to deploy manually.

@@ -59,15 +59,26 @@ restarts and machine changes). Secondary = `~/.claude` auto-memory, persisted vi
 
 **Deployment architecture:** Herald lives independently — NOT inside the main docker stack.
 It manages project containers via the Docker socket. Projects get their own compose stacks
-under `HERALD_DEPLOYMENTS_DIR`. Each project owns its own postgres if needed (no shared db).
+under `HERALD_ROOT/deployments/`. Each project owns its own postgres if needed (no shared db).
 Caddy routing is configured manually per project. All project containers join the `caddy_net`
 external Docker network. Kubernetes explicitly ruled out — single-server, Docker Compose is
 correct scale.
 
-**compose.yaml path convention:** Project repos and deployment stacks are mounted at the SAME
-absolute path inside the container as on the host (`HERALD_REPOS_ROOT` and
-`HERALD_DEPLOYMENTS_DIR` env vars). The Docker daemon resolves compose file paths from the
-host perspective, so paths must match.
+**Directory layout (`HERALD_ROOT` = deployment root on host, set in `.env`):**
+```
+HERALD_ROOT/
+  compose.yaml      ← NOT in the Herald git repo — deployment-specific config
+  .env              ← secrets + HERALD_ROOT path
+  projects/         ← YAML configs (managed by Herald, gitignored)
+  repos/
+    herald/         ← git clone of Herald source (what agents edit)
+    <project>/      ← other project repos
+  deployments/
+    <project>/compose.yaml
+```
+`repos/` and `deployments/` are mounted at the SAME absolute path inside the container
+as on the host. `HERALD_ROOT` must be absolute. The Docker daemon resolves compose paths
+from the host perspective — paths must match. `projects/` has no same-path requirement.
 
 **Docker Compose volumes (Herald's own compose):**
 - `herald_data` → `/app/data` (activity logs, runtime state) — MUST be a named volume
@@ -106,11 +117,13 @@ response. Pluggable backend: `claude-cli` (default), `anthropic` (API), `ollama`
 On roadmap after Phase 1.5.
 
 **Pre-deployment checklist:**
-- Install Claude Code CLI and authenticate (`claude login`)
-- Set `HERALD_OPERATOR_ID` in `.env` (your Discord user ID)
-- Set `HERALD_REPOS_ROOT` and `HERALD_DEPLOYMENTS_DIR` in `.env`
-- Update project YAMLs with real channel IDs (or use `!addproject` once built)
+- `mkdir $HERALD_ROOT && cd $HERALD_ROOT`
+- `git clone <herald-repo> repos/herald`
+- `cp repos/herald/.env.example .env` and fill in (`HERALD_ROOT` must be absolute)
+- `mkdir -p projects deployments`
 - `docker network create caddy_net` on the host
+- `docker compose up -d` (builds from `repos/herald/`)
+- `docker compose exec herald claude` to authenticate Claude Code
 
 ---
 

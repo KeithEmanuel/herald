@@ -96,7 +96,7 @@ Never break this — it's what prevents rate limit collisions and keeps cost pre
 # projects/example.yaml — copy and fill in for each project
 name: myproject
 display_name: "My Project"
-path: /repos/myproject          # absolute path inside the Herald container (bind-mounted)
+path: /srv/herald/repos/myproject  # absolute path — under HERALD_ROOT/repos/
 discord_channel_id: "123456789" # right-click channel in Discord → Copy Channel ID
 
 # Optional: per-agent Discord identity via webhook
@@ -125,7 +125,7 @@ schedule:
       Commit it to the current agent branch.
 
 deploy:
-  compose_path: null              # e.g. /mnt/lvm-nvme/herald/deployments/myproject/compose.yaml
+  compose_path: null              # e.g. /srv/herald/deployments/myproject/compose.yaml
   auto_deploy_on_push: false      # if true, deploys automatically after a 👍 push
 ```
 
@@ -248,24 +248,29 @@ Herald runs as an **independent service** — not nested inside your main docker
 It manages project containers via the Docker socket.
 
 ```
-/mnt/lvm-nvme/herald/       # Herald's runtime home on the host
-  compose.yaml              # Herald's own service definition
-  .env                      # DISCORD_TOKEN, ANTHROPIC_API_KEY
-  projects/                 # Private YAML configs (gitignored)
-  deployments/              # Project compose stacks managed by Herald
-    enchiridion/
-      compose.yaml
-    chortle/
+HERALD_ROOT/                # e.g. /srv/herald — set in .env
+  compose.yaml              # Herald's own service definition (this is NOT in the git repo)
+  .env                      # DISCORD_TOKEN, ANTHROPIC_API_KEY, HERALD_ROOT
+  projects/                 # Private YAML configs (managed by Herald, not in git)
+  repos/                    # All project source repos live here
+    herald/                 # Git clone of Herald itself (what agents edit)
+    myproject/              # Other project repos
+  deployments/              # Project docker compose stacks managed by Herald
+    myproject/
       compose.yaml
 ```
+
+**Setup:** `compose.yaml` is not cloned from the Herald repo — you create it at `HERALD_ROOT/`
+using the template in `repos/herald/compose.yaml`. It points `build: context: ./repos/herald`
+so Docker builds the Herald image from the cloned source.
 
 **Docker socket:** Herald bind-mounts `/var/run/docker.sock` to run `docker compose up --build -d`
 for project containers. This grants Herald full control over host Docker — it's intentional.
 
-**Path invariant:** Project compose stacks must be bind-mounted at the same absolute path inside
-the Herald container as on the host. The Docker daemon resolves compose file paths from the
-host perspective, so `/mnt/lvm-nvme/herald/deployments` must appear at that exact path inside
-the container.
+**Path invariant:** `repos/` and `deployments/` must be bind-mounted at the same absolute path
+inside the Herald container as on the host. The Docker daemon resolves compose file paths from
+the host perspective, so `HERALD_ROOT/deployments/myproject/compose.yaml` must appear at that
+exact path inside the container. This is why `HERALD_ROOT` must be an absolute path.
 
 **Caddy routing:** Each project container joins the `caddy_net` external Docker network.
 Caddy routing is configured manually per project (not automated by Herald).
@@ -281,7 +286,7 @@ Caddy routing is configured manually per project (not automated by Herald).
 
 **Via Discord (recommended):**
 ```
-!addproject chortle /mnt/lvm-nvme/chortle
+!addproject chortle /srv/herald/repos/chortle
 ```
 Herald creates the channel, webhook, and YAML. Hot-reloads config. Done.
 
