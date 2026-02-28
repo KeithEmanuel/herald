@@ -1,12 +1,12 @@
 # Herald — compose.yaml
 #
 # Herald runs as an independent service, separate from your main docker stack.
-# It manages project containers via the Docker socket.
+# It manages project containers via the container runtime socket.
 #
 # Directory layout on the host (HERALD_ROOT = the dir containing this file):
 #
 #   HERALD_ROOT/
-#     compose.yaml             ← this file
+#     compose.yaml             ← this file (copy from repos/herald/compose.yaml)
 #     .env                     ← secrets (copy from repos/herald/.env.example)
 #     projects/                ← private YAML configs, written by !addproject
 #     repos/
@@ -15,19 +15,24 @@
 #     deployments/             ← project docker compose stacks
 #       <project>/
 #         compose.yaml
+#     caddy/                   ← optional: only needed if using the Caddy sidecar
+#       Caddyfile              ← copy from repos/herald/caddy/Caddyfile.example
 #
-# Setup:
+# Setup (Podman rootless — recommended):
 #   1. mkdir $HERALD_ROOT && cd $HERALD_ROOT
 #   2. git clone <herald-repo> repos/herald
-#   3. cp repos/herald/.env.example .env  # then fill in values
-#   4. mkdir -p projects deployments
-#   5. docker network create caddy_net    # shared network for Caddy + project containers
-#   6. docker compose up -d
-#   7. docker compose exec herald claude  # authenticate Claude Code (first time only)
+#   3. cp repos/herald/compose.yaml .
+#   4. cp repos/herald/.env.example .env  # then fill in values
+#   5. mkdir -p projects deployments
+#   6. podman compose up -d
+#   7. podman compose exec herald claude  # authenticate Claude Code (first time only)
+#
+# Setup (Docker):
+#   Same as above but use `docker compose` and ensure HERALD_DOCKER_SOCKET is set.
 #
 # Usage:
-#   docker compose logs -f herald
-#   docker compose restart herald
+#   podman compose logs -f herald
+#   podman compose restart herald
 
 services:
   herald:
@@ -42,17 +47,30 @@ services:
       HERALD_PROJECTS_DIR: /herald/projects
       # ANTHROPIC_API_KEY and DISCORD_TOKEN come from .env
     restart: unless-stopped
+    networks:
+      - default
+      # - herald_net  # uncomment when using the Caddy sidecar below
     volumes:
       # Project registry — private YAML configs, written by !addproject
       - ./projects:/herald/projects:rw
 
-      # Docker socket — Herald uses this to run `docker compose up --build -d`
-      # for project containers. This grants Herald full control over host Docker.
-      # Required for !deploy and auto_deploy_on_push to work.
-      - /var/run/docker.sock:/var/run/docker.sock
+      # Container runtime socket — Herald uses this to run `docker compose up --build -d`
+      # for project containers. Required for !deploy and auto_deploy_on_push to work.
+      #
+      # Podman rootless (recommended):
+      #   Set HERALD_DOCKER_SOCKET=/run/user/<uid>/podman/podman.sock in .env
+      #   Requires: podman system service running as a dedicated herald user
+      #   Security: container escape limited to user-level access, not root
+      #
+      # Docker:
+      #   Leave HERALD_DOCKER_SOCKET unset (defaults to /var/run/docker.sock)
+      #   Security: grants full root-equivalent control over host Docker
+      #
+      # Always mounted at /var/run/docker.sock inside the container.
+      - ${HERALD_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
 
       # Repos and deployments — mounted at the SAME absolute path as the host.
-      # The Docker daemon resolves compose file paths from the host perspective,
+      # The container runtime resolves compose file paths from the host perspective,
       # so paths must match on both sides. HERALD_ROOT must be absolute in .env.
       - ${HERALD_ROOT}/repos:${HERALD_ROOT}/repos:rw
       - ${HERALD_ROOT}/deployments:${HERALD_ROOT}/deployments:rw
@@ -62,7 +80,6 @@ services:
       - herald_data:/app/data
 
       # Git credentials — needed if agents push to remote repos (GitHub releases, etc.)
-      # Bind-mounting ~/.gitconfig and ~/.ssh is the simplest approach.
       - ~/.gitconfig:/root/.gitconfig:ro
       - ~/.ssh:/root/.ssh:ro
 
@@ -73,7 +90,57 @@ services:
       # SOUL.md in each project repo is the primary memory; this is supplementary.
       - herald_claude_memory:/root/.claude
 
+  # ---------------------------------------------------------------------------
+  # OPTIONAL: Caddy sidecar
+  # ---------------------------------------------------------------------------
+  # Uncomment this service to run Caddy alongside Herald.
+  #
+  # Use case: you want Herald to be fully self-contained — its own reverse proxy,
+  # no dependency on an external Caddy or Nginx. Herald-managed project containers
+  # join herald_net and are routable by container name from Caddy.
+  #
+  # If you already run Caddy in a separate stack, leave this commented and configure
+  # that Caddy to route to your project containers via caddy_net (external network).
+  #
+  # When using the sidecar:
+  #   - Create caddy/Caddyfile (see repos/herald/caddy/Caddyfile.example)
+  #   - Uncomment the herald_net network entries throughout this file
+  #   - Project containers must join herald_net in their own compose files:
+  #       networks:
+  #         herald_net:
+  #           external: true
+  #   - If you have an upstream reverse proxy, forward your domains to port
+  #     HERALD_CADDY_PORT (default 8080) on the host
+  #
+  # caddy:
+  #   image: caddy:alpine
+  #   restart: unless-stopped
+  #   ports:
+  #     - "${HERALD_CADDY_PORT:-8080}:80"
+  #     # - "443:443"  # uncomment to handle TLS directly (needs port 80 too for ACME)
+  #   networks:
+  #     - default
+  #     - herald_net
+  #   volumes:
+  #     - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+
+# ---------------------------------------------------------------------------
+# Networks
+# ---------------------------------------------------------------------------
+# herald_net is used when the Caddy sidecar is enabled. It's a shared network
+# for Herald's Caddy and all Herald-managed project containers, allowing Caddy
+# to route to them by container name.
+#
+# Uncomment when using the Caddy sidecar:
+# networks:
+#   herald_net:
+#     name: herald_net   # explicit name so project compose files can reference it
+
 volumes:
   herald_data:
   herald_claude_config:
   herald_claude_memory:
+  # caddy_data:    # uncomment when using Caddy sidecar
+  # caddy_config:  # uncomment when using Caddy sidecar

@@ -122,11 +122,16 @@ schedule:
 #   message. Report what you did and what's next.
 #
 # Onboard a new project (creates SOUL.md from scratch):
-#   !run myproject You are a new agent on this project. Read CLAUDE.md and
-#   explore the codebase. Write SOUL.md — give yourself a name (use a heraldic
-#   tincture: Or, Argent, Sable, Gules, Azure, Vert, Purpure), a role, and a
-#   personality that fits the project. Write initial MEMORY.md Core Memories
-#   based on what you learn. Introduce yourself with a short message.
+#   Best results if you've written humans/<yourname>.md first — the agent uses it
+#   to calibrate its name and personality to the project and operator.
+#
+#   !run myproject You are a new agent on this project. Read CLAUDE.md and explore
+#   the codebase. Check humans/ for any contributor profiles. Write SOUL.md —
+#   choose a name that fits this project and what you know about the people here
+#   (any name is fine; Herald agents use heraldic tinctures, but that's a suggestion
+#   not a rule). Write your role and a personality that reflects how you'll actually
+#   work here. Write initial MEMORY.md Core Memories based on what you learn.
+#   Introduce yourself with a short message.
 #
 # Documentation audit:
 #   !run myproject Compare the codebase to the README and any docs/. Find
@@ -143,3 +148,18 @@ schedule:
 #   variable names, functions doing too much, TODOs that should be tickets.
 #   Write findings to TASKS.md under a "Code Review YYYY-MM-DD" section.
 #   Report a 3-5 bullet summary.
+#
+# Security audit:
+#   !run myproject Read SOUL.md and MEMORY.md. Do a security pass on the codebase:
+#   check for hardcoded secrets, injection risks (SQL, shell, template), insecure
+#   defaults, overly permissive configs, and dependencies with known CVEs. Use
+#   whatever tools are appropriate for this stack. Write findings to TASKS.md
+#   under "Security Audit YYYY-MM-DD" — severity (high/medium/low) and a brief
+#   description for each. Report a summary to Discord.
+#
+# Code health sweep (maintenance / ownership):
+#   !run myproject Read SOUL.md and MEMORY.md. Do a maintenance pass: check for
+#   outdated dependencies, dead code, documentation drift (README vs. codebase),
+#   and anything that should be a ticket but isn't. Update TASKS.md with anything
+#   you find. If any dependency updates are safe to apply, apply them and commit.
+#   Report what you did and what you left for the owner to decide.

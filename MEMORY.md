@@ -21,9 +21,11 @@ Argent. The distinction matters for how future operators onboard their own agent
 **Open source first:** No operator-specific content in source. Private config lives exclusively
 in `projects/*.yaml` (gitignored). Adding a new project = `!addproject`, never touch code.
 
-**Heraldic tincture naming convention:** Agent souls are named after heraldic tinctures.
-Sable (black/ink), Argent (silver), Or (gold), Gules (red), Azure (blue), Vert (green),
-Purpure (purple). Chosen by Sable on 2026-02-27 — not assigned, earned.
+**Agent naming convention:** Herald's own agents use heraldic tincture names by convention
+(Argent, Or, Sable, Gules, Azure, Vert, Purpure) — chosen, not assigned. But this is NOT
+a constraint for Herald-managed projects. Agents on other projects choose names that fit
+their project and operator, informed by `humans/` profiles written before the first session.
+Heraldic names are one option among many.
 
 ---
 
@@ -51,40 +53,52 @@ Herald detects unpushed branches → posts Discord proposal → 👍 push / 👎
 Tracked via `_pending_pushes: dict[int, dict]` keyed on Discord message ID.
 
 **Accountability thresholds:** 14d = nudge, 21d = direct check-in, 28d+ = roast.
-Data stored in `data/activity.json`, persisted via Docker named volume. Checked daily at 9am.
+Data stored in `data/activity.json`, persisted via named volume. Checked daily at 9am.
 
 **Memory architecture:** Primary persistent memory = `SOUL.md` in git (survives container
 restarts and machine changes). Secondary = `~/.claude` auto-memory, persisted via
 `herald_claude_memory` named volume in `compose.yaml`. SOUL.md wins on conflict.
 
 **Deployment architecture:** Herald lives independently — NOT inside the main docker stack.
-It manages project containers via the Docker socket. Projects get their own compose stacks
-under `HERALD_ROOT/deployments/`. Each project owns its own postgres if needed (no shared db).
-Caddy routing is configured manually per project. All project containers join the `caddy_net`
-external Docker network. Kubernetes explicitly ruled out — single-server, Docker Compose is
-correct scale.
+It manages project containers via the container runtime socket (Docker or Podman rootless).
+**Podman rootless is the recommended runtime** — scopes socket access to a dedicated user,
+limits container escape to user-level not root. Docker works but grants root-equivalent access.
+Projects get their own compose stacks under `HERALD_ROOT/deployments/`. Kubernetes ruled out.
 
 **Directory layout (`HERALD_ROOT` = deployment root on host, set in `.env`):**
 ```
 HERALD_ROOT/
   compose.yaml      ← NOT in the Herald git repo — deployment-specific config
-  .env              ← secrets + HERALD_ROOT path
-  projects/         ← YAML configs (managed by Herald, gitignored)
+  .env              ← secrets + HERALD_ROOT (must be absolute)
+  projects/         ← YAML configs (managed by Herald, not in git)
   repos/
     herald/         ← git clone of Herald source (what agents edit)
     <project>/      ← other project repos
   deployments/
     <project>/compose.yaml
+  caddy/            ← optional: only if using Herald's Caddy sidecar
+    Caddyfile
 ```
-`repos/` and `deployments/` are mounted at the SAME absolute path inside the container
-as on the host. `HERALD_ROOT` must be absolute. The Docker daemon resolves compose paths
-from the host perspective — paths must match. `projects/` has no same-path requirement.
+`repos/` and `deployments/` must be bind-mounted at the SAME absolute path (same-path
+invariant). `projects/` has no same-path requirement — different container path is fine.
 
-**Docker Compose volumes (Herald's own compose):**
-- `herald_data` → `/app/data` (activity logs, runtime state) — MUST be a named volume
+**Caddy routing options:**
+1. **Sidecar (recommended):** Caddy runs as a service in Herald's compose.yaml alongside
+   Herald. Herald + project containers + Caddy all share `herald_net`. Caddy routes by
+   container name. External reverse proxy (if any) forwards to HERALD_CADDY_PORT (default 8080).
+2. **External Caddy (existing setup):** User manages their own Caddy. Project containers
+   join a shared `caddy_net` external network.
+Template: `caddy/Caddyfile.example` in the repo.
+
+**Container runtime socket config:**
+- `HERALD_DOCKER_SOCKET` env var (default: `/var/run/docker.sock`)
+- Always mounted at `/var/run/docker.sock` inside the container
+- Docker CLI in the image works with Podman's Docker-compatible API transparently
+
+**Named volumes (Herald's own compose):**
+- `herald_data` → `/app/data` (activity logs, runtime state) — MUST be named
 - `herald_claude_memory` → `/root/.claude` (agent auto-memory)
 - `herald_claude_config` → `/root/.config/claude` (Claude Code auth)
-- `/var/run/docker.sock` bind-mounted → Herald uses Docker CLI to deploy project containers
 
 **Discord identity design:** Per-agent Discord identity via webhooks — not multiple bot
 accounts. Single Herald bot token handles receiving commands. Per-project webhooks handle
@@ -94,9 +108,15 @@ Bot needs `Manage Webhooks` + `Manage Channels` permissions.
 **Cron stagger:** Projects staggered +15 minutes per project index in the YAML load order.
 Project 0 = base time, project 1 = base+15min, etc.
 
+**Security threat model:** Prompt injection is the main risk for managed repos. Malicious
+repo content → agent executes injected instructions → shell commands inside Herald container
+→ container runtime socket → host access. Mitigations: Podman rootless (limits blast radius),
+`HERALD_OPERATOR_ID` (restricts who can trigger runs), review agent commits before approving.
+Don't run agents on untrusted/public repos without additional safeguards.
+
 **Doc structure:** `docs/spec.md` (full feature spec), `docs/agent-pattern.md` (reusable
 agent design pattern), `docs/roadmap.md` (roadmap). `templates/` — starter kit for new
-projects: SOUL.md, MEMORY.md, CLAUDE.md.
+projects: SOUL.md, MEMORY.md, CLAUDE.md. `blog/` — agent-written posts for GitHub Pages.
 
 ---
 
@@ -104,26 +124,42 @@ projects: SOUL.md, MEMORY.md, CLAUDE.md.
 
 *Current sprint context. Roll up to long-term after ~2 weeks or phase end.*
 
-**Status (2026-02-28):** Core built and functional. Bot, serial queue, APScheduler, git
-approval flow, activity tracking, accountability checker, deploy feature, soul check on
-`on_ready`. All wired together. Moved to standalone repo.
+**Status (2026-02-28):** Core built and functional. Repo restructured to HERALD_ROOT layout
+(repos/herald/ for source, deployments/, caddy/ sidecar option). Podman rootless added as
+recommended runtime. Security threat model documented. Repo pushed to keithemanuel/herald
+(private). First deployment in progress on Keith's server at /mnt/lvm-nvme/herald/.
+
+**Changes this session (2026-02-28, second session):**
+- HERALD_ROOT consolidation: replaced HERALD_REPOS_ROOT + HERALD_DEPLOYMENTS_DIR with single var
+- compose.yaml build context changed to `./repos/herald` (Herald source in repos/)
+- Podman rootless support: HERALD_DOCKER_SOCKET configurable, always mounts at /var/run/docker.sock
+- Caddy sidecar added to compose.yaml (commented out, optional), with caddy/Caddyfile.example
+- Podman promoted to recommended runtime in README, spec.md, compose.yaml
+- README rewritten for new HERALD_ROOT layout
+- Security threat model documented (prompt injection chain, mitigations)
+- Launch blog post written: blog/2026-02-28-introducing-herald.md
 
 **Phase 1.5 next:** Webhook support + `!addproject` + hot-reload config + `!schedule`
-command + Herald managing itself (`projects/herald.yaml`). These are the priority before
-first real deployment.
+command + Herald managing itself (`projects/herald.yaml`). Priority before first real use.
 
-**Chatbot feature planned:** Non-`!command` messages in `#argent` channel get conversational
-response. Pluggable backend: `claude-cli` (default), `anthropic` (API), `ollama` (local).
-On roadmap after Phase 1.5.
+**Changes this session (2026-02-28, third session):**
+- Agent naming freedom: heraldic names remain Herald's own convention but are no longer
+  a constraint for managed projects; `humans/<name>.md` written first, then soul bootstrapped
+- Ownership mindset added to all template/prompt files:
+  - `templates/SOUL.md` — codebase stewardship in values + instructions
+  - `templates/CLAUDE.md` — new "Codebase Ownership" section
+  - `docs/agent-pattern.md` — new "Ownership Mindset" section; humans-first bootstrapping;
+    naming guidance expanded
+  - `projects/example.yaml` — onboarding !run updated (naming freedom + humans/ context);
+    new security audit and code health sweep !run templates added
+  - `CLAUDE.md` (Herald's) — naming freedom note in Soul Creation; new "Codebase Ownership"
+    section for Argent specifically; naming convention updated in MEMORY.md
 
-**Pre-deployment checklist:**
-- `mkdir $HERALD_ROOT && cd $HERALD_ROOT`
-- `git clone <herald-repo> repos/herald`
-- `cp repos/herald/.env.example .env` and fill in (`HERALD_ROOT` must be absolute)
-- `mkdir -p projects deployments`
-- `docker network create caddy_net` on the host
-- `docker compose up -d` (builds from `repos/herald/`)
-- `docker compose exec herald claude` to authenticate Claude Code
+**Deployment blockers (Keith's server):**
+- Changes from this session not yet pushed to GitHub (need `git push` on laptop)
+- Server needs to `git pull` in repos/herald/ then restart
+- Keith's Caddy is Docker-based; for now use sidecar pattern or migrate to Podman separately
+- Pre-deployment: `HERALD_ROOT=/mnt/lvm-nvme/herald`, `HERALD_DOCKER_SOCKET` for Podman if used
 
 ---
 

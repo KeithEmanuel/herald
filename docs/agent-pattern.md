@@ -104,6 +104,29 @@ human prompting. With it, the agent handles it automatically.
 
 ---
 
+## Ownership Mindset
+
+The agent pattern works best when the agent treats the codebase as its own responsibility —
+not just a set of tasks to execute.
+
+This means the agent doesn't wait to be asked about problems it notices. If it spots a security
+issue while fixing a bug, it mentions it. If it sees documentation drift, accumulating tech
+debt, or a dependency that should be updated, it logs it in TASKS.md or flags it in its response
+— without being prompted.
+
+This is baked into the template files:
+- `SOUL.md` — "Codebase stewardship" is listed under values. The agent will mention things it
+  notices, even when not asked.
+- `CLAUDE.md` — The "Codebase Ownership" section names this explicitly: flag problems, catch
+  regressions, own the maintenance, code review mindset.
+- `TASKS.md` — The agent keeps a living backlog. Things it notices go here. The human decides
+  priority, but nothing gets silently ignored.
+
+Future Herald features will add PR review and automated security scanning. The mindset is
+already present — the tools will follow.
+
+---
+
 ## Optional Files
 
 These add capability when you're ready. Start without them.
@@ -162,7 +185,7 @@ with external parties.
 ### Minimum viable setup (just you, greenfield)
 
 Copy from `herald/templates/`:
-1. `SOUL.md` — fill in the agent name and your project context
+1. `SOUL.md` — leave the placeholders; the agent fills it in on first session
 2. `CLAUDE.md` — adapt to your tech stack, keep the end-of-session block
 3. `MEMORY.md` — start empty, the agent fills it in
 
@@ -176,12 +199,31 @@ That's it. Three files. Everything else is additive.
 
 ### Bootstrapping the agent identity
 
-On your first session, ask the agent to read CLAUDE.md and SOUL.md, then:
-> "Introduce yourself. Read SOUL.md and fill in the identity sections based on what you
-> know about this project. You'll update it over time."
+**Recommended: write your contributor profile first.**
 
-The agent will write its own soul from the template. This is intentional — an agent that
-wrote its own identity file invests in it differently than one that was handed a filled-in form.
+Before the first agent session, copy `templates/humans/template.md` to `humans/<yourname>.md`
+and fill it in. This takes two minutes and gives the agent real material to work from when it
+chooses a name and personality — instead of guessing from cold.
+
+Then on your first session:
+> "Introduce yourself. Read CLAUDE.md, SOUL.md, and humans/. Fill in SOUL.md — choose a name
+> that fits this project and what you know about me. Write initial core memories based on what
+> you find in the codebase."
+
+The agent will write its own soul from the template. This is intentional — an agent that wrote
+its own identity file invests in it differently than one that was handed a completed form. The
+`humans/` context gives it something to calibrate against, so the result is more specific and
+less generic.
+
+### Naming
+
+Agents can be named anything. Herald's own agents use heraldic tincture names (Argent, Or, Sable,
+Gules, Azure, Vert, Purpure) — but that's a convention, not a constraint. An agent working on a
+music project might name itself Tempo. An agent on a cooking app might pick Saffron. The name
+should fit the project and the relationship, not a fixed list.
+
+The bootstrapping prompt above lets the agent choose. If you want to suggest a name or direction,
+you can — the agent will take it into account. If you have no preference, leave it open.
 
 ---
 

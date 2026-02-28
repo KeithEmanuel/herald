@@ -1,0 +1,72 @@
+# Herald — Caddyfile.example
+#
+# Copy this to caddy/Caddyfile and edit for your projects.
+# Used when the Caddy sidecar is enabled in compose.yaml.
+#
+# Each Herald-managed project container is reachable by its container name
+# on herald_net. The container name matches the service name in the project's
+# deployments/<project>/compose.yaml.
+#
+# Caddy handles HTTPS automatically via Let's Encrypt when given real domain names.
+# For local testing, use *.localhost (no TLS needed).
+#
+# Docs: https://caddyserver.com/docs/caddyfile
+
+# ---------------------------------------------------------------------------
+# Example: single project on a real domain
+# ---------------------------------------------------------------------------
+# myproject.example.com {
+#     reverse_proxy myproject:3000
+# }
+
+# ---------------------------------------------------------------------------
+# Example: multiple projects on subdomains
+# ---------------------------------------------------------------------------
+# chortle.example.com {
+#     reverse_proxy chortle:8080
+# }
+#
+# enchiridion.example.com {
+#     reverse_proxy enchiridion:4000
+# }
+
+# ---------------------------------------------------------------------------
+# Example: path-based routing (all projects on one domain)
+# ---------------------------------------------------------------------------
+# apps.example.com {
+#     handle /chortle/* {
+#         uri strip_prefix /chortle
+#         reverse_proxy chortle:8080
+#     }
+#     handle /enchiridion/* {
+#         uri strip_prefix /enchiridion
+#         reverse_proxy enchiridion:4000
+#     }
+# }
+
+# ---------------------------------------------------------------------------
+# Example: local development (no TLS)
+# ---------------------------------------------------------------------------
+# :8080 {
+#     @chortle host chortle.localhost
+#     handle @chortle {
+#         reverse_proxy chortle:8080
+#     }
+#
+#     @enchiridion host enchiridion.localhost
+#     handle @enchiridion {
+#         reverse_proxy enchiridion:4000
+#     }
+# }
+
+# ---------------------------------------------------------------------------
+# If Herald's Caddy sits behind an external reverse proxy (e.g. your existing
+# Docker Caddy), configure the upstream to forward by domain name to port
+# HERALD_CADDY_PORT (default 8080) on the host. Herald's Caddy handles all
+# routing internally; the upstream just needs to pass the right Host header.
+#
+# Example upstream Caddyfile entry (your existing Docker Caddy):
+#   myproject.example.com {
+#       reverse_proxy localhost:8080
+#   }
+# ---------------------------------------------------------------------------

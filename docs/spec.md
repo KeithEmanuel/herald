@@ -264,8 +264,22 @@ HERALD_ROOT/                # e.g. /srv/herald — set in .env
 using the template in `repos/herald/compose.yaml`. It points `build: context: ./repos/herald`
 so Docker builds the Herald image from the cloned source.
 
-**Docker socket:** Herald bind-mounts `/var/run/docker.sock` to run `docker compose up --build -d`
-for project containers. This grants Herald full control over host Docker — it's intentional.
+**Container runtime socket:** Herald bind-mounts the container runtime socket to run
+`docker compose up --build -d` for project containers. The Docker CLI client in the Herald
+image works with both Docker and Podman (Podman provides a Docker-compatible API).
+
+- **Docker (default):** `/var/run/docker.sock` — root daemon, full host Docker access
+- **Podman rootless (recommended for public repos):** set `HERALD_DOCKER_SOCKET` in `.env`
+  to `/run/user/<uid>/podman/podman.sock`. Requires `podman system service` running as a
+  dedicated `herald` user. Container escapes are limited to user-level access, not root.
+
+  Host setup for Podman rootless:
+  ```bash
+  useradd -r -s /bin/false herald
+  loginctl enable-linger herald
+  # As the herald user:
+  systemctl --user enable --now podman.socket
+  ```
 
 **Path invariant:** `repos/` and `deployments/` must be bind-mounted at the same absolute path
 inside the Herald container as on the host. The Docker daemon resolves compose file paths from

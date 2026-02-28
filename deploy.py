@@ -58,7 +58,8 @@ async def deploy_project(compose_path: str) -> str:
         return (
             "[ERROR] `docker` command not found. "
             "Is Docker CLI installed in the Herald container? "
-            "Check the Dockerfile and ensure /var/run/docker.sock is mounted."
+            "Check the Dockerfile and ensure the container runtime socket is mounted "
+            "(HERALD_DOCKER_SOCKET in .env — Docker or Podman rootless)."
         )
     except Exception as e:
         return f"[ERROR] Unexpected exception during deploy: {type(e).__name__}: {e}"

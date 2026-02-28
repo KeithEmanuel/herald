@@ -6,7 +6,9 @@ WORKDIR /app
 #   - Node.js (22.x via NodeSource) — required for Claude Code CLI
 #   - git — agent runs commit to local branches
 #   - Docker CLI + Compose plugin — Herald uses these to build/deploy project containers
-#     via the /var/run/docker.sock bind mount. CLI only — no daemon in this image.
+#     via the socket bind mount (see compose.yaml). CLI only — no daemon in this image.
+#     Works with both Docker (/var/run/docker.sock) and Podman rootless (via
+#     HERALD_DOCKER_SOCKET in .env — Podman provides a Docker-compatible API).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl git gnupg ca-certificates \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \

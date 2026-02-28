@@ -23,6 +23,10 @@
 - [x] Dockerfile — Docker CLI + Compose plugin baked in
 - [x] `compose.yaml` rewritten for standalone deployment (fixed build context, herald_data volume, Docker socket, deployments bind-mount)
 - [x] Move to own repo — extracted from `enchiridion/herald/`, standalone at `/home/keith/Repos/herald/` (2026-02-27)
+- [x] **HERALD_ROOT layout** — consolidated HERALD_REPOS_ROOT + HERALD_DEPLOYMENTS_DIR into single `HERALD_ROOT` var; Herald source now lives in `repos/herald/` like other projects; build context updated to `./repos/herald` (2026-02-28)
+- [x] **Podman rootless support** — `HERALD_DOCKER_SOCKET` env var makes socket path configurable; Docker CLI in image works transparently with Podman's Docker-compatible API; Podman promoted to recommended runtime in all docs (2026-02-28)
+- [x] **Caddy sidecar option** — optional Caddy service in compose.yaml (commented out); `caddy/Caddyfile.example` template; `herald_net` shared network for Caddy ↔ project container routing (2026-02-28)
+- [x] **Security threat model documented** — prompt injection chain, Docker socket risk, Podman rootless mitigation, per-project considerations (2026-02-28)
 
 ---
 
@@ -85,8 +89,12 @@ Herald is single-operator today. These open it up.
 
 - [x] **Move to own repo** — extracted from `enchiridion/herald/` (2026-02-27)
 - [ ] **Push to GitHub** — public repo, MIT license, README for strangers
-- [ ] **Docker Hub image** — published image so operators can `docker compose up` without
-      building from source
+- [ ] **Container registry image** — published image (ghcr.io or Docker Hub) so operators
+      can `podman compose up` without building from source
+- [ ] **Podman rootless setup guide** — detailed walkthrough for the recommended runtime:
+      dedicated `herald` user, `podman system service`, lingering, socket path
+- [ ] **GitHub Pages / blog** — launch post written (`blog/2026-02-28-introducing-herald.md`);
+      needs a static site to publish it (Jekyll or MkDocs)
 - [ ] **MkDocs or Docusaurus docs site** — operator guide, project config reference,
       pattern kit docs
 - [ ] **Projects registry** (optional) — public list of Herald deployments / agents,
