@@ -3,12 +3,15 @@
 # Herald runs as an independent service, separate from your main docker stack.
 # It manages project containers via the Docker socket.
 #
-# First-time setup on the host:
-#   docker network create caddy_net   # shared network for Caddy + project containers
+# Setup:
+#   1. Copy .env.example to .env and fill in required values
+#   2. docker network create caddy_net   # shared network for Caddy + project containers
+#   3. docker compose up -d
+#   4. docker compose exec herald claude  # authenticate Claude Code (first time only)
 #
 # Usage:
-#   cd /mnt/lvm-nvme/herald && docker compose up -d
 #   docker compose logs -f herald
+#   docker compose restart herald
 
 services:
   herald:
@@ -23,18 +26,23 @@ services:
       # ANTHROPIC_API_KEY and DISCORD_TOKEN come from .env
     restart: unless-stopped
     volumes:
-      # Project registry — private YAML configs, not in the Herald git repo
-      - ./projects:/herald/projects:ro
+      # Project registry — private YAML configs, written by !addproject
+      - ./projects:/herald/projects:rw
 
       # Docker socket — Herald uses this to run `docker compose up --build -d`
       # for project containers. This grants Herald full control over host Docker.
       # Required for !deploy and auto_deploy_on_push to work.
       - /var/run/docker.sock:/var/run/docker.sock
 
-      # Project deployment stacks — mounted at the SAME absolute path as the host.
-      # The Docker daemon resolves paths in compose files from the host perspective,
-      # so the path inside this container must match what's on disk on the host.
-      - /mnt/lvm-nvme/herald/deployments:/mnt/lvm-nvme/herald/deployments:rw
+      # Project repos — mounted at the SAME absolute path as the host so agents
+      # can read/write them. Set HERALD_REPOS_ROOT in .env to your repos directory.
+      # The path must match on both sides — the Docker daemon resolves paths from
+      # the host perspective.
+      - ${HERALD_REPOS_ROOT:-/srv/repos}:${HERALD_REPOS_ROOT:-/srv/repos}:rw
+
+      # Project deployment stacks — same same-path requirement as above.
+      # Set HERALD_DEPLOYMENTS_DIR in .env to wherever you keep compose stacks.
+      - ${HERALD_DEPLOYMENTS_DIR:-/srv/herald/deployments}:${HERALD_DEPLOYMENTS_DIR:-/srv/herald/deployments}:rw
 
       # Activity data — persists accountability tracking across container restarts.
       # Without this, the inactivity clock resets every time Herald restarts.

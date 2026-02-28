@@ -17,6 +17,7 @@ Git approval flow:
   If the project has auto_deploy_on_push enabled, a deploy is queued after a push.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -46,7 +47,7 @@ class HeraldBot(commands.Bot):
       3. on_ready: log that we're online
     """
 
-    def __init__(self, projects_dir: Path):
+    def __init__(self, projects_dir: Path, operator_id: int | None = None):
         intents = discord.Intents.default()
         # message_content: needed to read the content of !commands
         intents.message_content = True
@@ -57,6 +58,10 @@ class HeraldBot(commands.Bot):
 
         self.projects: dict[str, ProjectConfig] = load_projects(projects_dir)
         self.task_queue = TaskQueue()
+
+        # If set, only this Discord user ID can approve/discard push proposals.
+        # Sourced from HERALD_OPERATOR_ID env var. None = any server member (not recommended).
+        self.operator_id: int | None = operator_id
 
         # Pending push-approval requests.
         # Maps Discord message_id → {"project_name": str, "branch": str}
@@ -241,7 +246,11 @@ class HeraldBot(commands.Bot):
         if not project.git.push_requires_approval:
             return
 
-        unpushed = get_unpushed_agent_branches(project.path, project.git.branch_prefix)
+        # Run sync git ops in a thread pool — they use blocking subprocess and would
+        # stall the event loop if called directly from async context.
+        unpushed = await asyncio.to_thread(
+            get_unpushed_agent_branches, project.path, project.git.branch_prefix
+        )
 
         for item in unpushed:
             branch = item["branch"]
@@ -288,6 +297,14 @@ class HeraldBot(commands.Bot):
         if payload.message_id not in self._pending_pushes:
             return
 
+        # Only the operator can approve or discard push proposals
+        if self.operator_id is not None and payload.user_id != self.operator_id:
+            log.warning(
+                "Push reaction from non-operator user %d ignored (operator is %d)",
+                payload.user_id, self.operator_id,
+            )
+            return
+
         emoji = str(payload.emoji)
         if emoji not in (THUMBS_UP, THUMBS_DOWN):
             return
@@ -303,7 +320,7 @@ class HeraldBot(commands.Bot):
             return
 
         if emoji == THUMBS_UP:
-            success, message = push_branch(project.path, branch)
+            success, message = await asyncio.to_thread(push_branch, project.path, branch)
             if success:
                 await channel.send(f"Pushed `{branch}` to origin. {message}")
                 # Auto-deploy if the project is configured for it
@@ -313,7 +330,7 @@ class HeraldBot(commands.Bot):
             else:
                 await channel.send(f"Push failed for `{branch}`:\n```\n{message}\n```")
         else:
-            success, message = delete_branch(project.path, branch)
+            success, message = await asyncio.to_thread(delete_branch, project.path, branch)
             await channel.send(message)
 
     # -------------------------------------------------------------------------

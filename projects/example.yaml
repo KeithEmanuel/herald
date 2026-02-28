@@ -6,18 +6,23 @@
 # Required fields: name, display_name, path, discord_channel_id
 
 name: myproject
-display_name: "My Project (AgentName)"
+display_name: "My Project"
 
 # Absolute path to the project repo inside the Herald container.
-# Set via bind mount in compose.yaml — e.g.:
-#   volumes:
-#     - /home/me/myproject:/repos/myproject:rw
-path: /repos/myproject
+# Herald mounts a parent directory containing all your repos (e.g. /mnt/lvm-nvme).
+# Use !addproject to register automatically — or fill this in manually.
+path: /mnt/lvm-nvme/myproject
 
 # Discord channel ID for this project.
-# How to find it: right-click a channel in Discord → "Copy Channel ID"
+# Created automatically by !addproject, or:
+# Right-click a channel in Discord → "Copy Channel ID"
 # (requires Developer Mode: User Settings → Advanced → Developer Mode)
 discord_channel_id: "YOUR_CHANNEL_ID_HERE"
+
+# Path to the agent's avatar image, relative to the project repo root.
+# Herald uses this when creating the project's Discord webhook.
+# PNG recommended. If omitted, the webhook uses the default bot avatar.
+agent_avatar: argent.png
 
 git:
   # If true, the Claude agent may commit locally during a run.
@@ -39,9 +44,6 @@ git:
 #
 # Project containers communicate with Caddy via a shared external Docker network (caddy_net).
 # Create it once on the host: docker network create caddy_net
-# Then add your project service to it in the project's own compose.yaml.
-#
-# For a template project compose.yaml, see docs/deploy-template.yaml (coming soon).
 deploy:
   # Absolute path to this project's docker-compose file on the host.
   # Omit or leave null to disable Herald-managed deployment.
@@ -51,23 +53,93 @@ deploy:
   # If false (default), use !deploy myproject to deploy manually.
   auto_deploy_on_push: false
 
-# Cron-triggered tasks. List as many as you want.
+# ---------------------------------------------------------------------------
+# Cron-triggered tasks
+# ---------------------------------------------------------------------------
 # Cron format: minute hour day-of-month month day-of-week (5 fields)
-# Multiple projects with the same cron time are staggered by 15 minutes automatically.
+# Multiple projects with the same cron time are staggered +15min automatically.
+#
+# Task prompts run via: cd <path> && claude -p "<task>" --print
+# The agent reads CLAUDE.md, SOUL.md, and MEMORY.md for context.
+# ---------------------------------------------------------------------------
+
 schedule:
-  # Daily reflection — reads SOUL.md and memory, writes a journal entry
+  # --- Daily: Morning reflection (5-10 min) ---
+  # Keeps the agent's context fresh. Low cost, high value.
   - cron: "0 8 * * *"
     task: >
-      Read SOUL.md and memory/MEMORY.md. Write a brief journal entry noting
-      project status, any open questions, and anything that looks inconsistent
-      or needs attention. Update SOUL.md Core Memories if anything is worth
-      remembering long-term. Update memory/MEMORY.md if project status has changed.
-      Keep the journal entry under 200 words and post it as your response.
+      Read SOUL.md and MEMORY.md. Check recent git log (last 5 commits).
+      Write a brief status note: what's in progress, what's blocked, what needs
+      attention today. Update MEMORY.md Short-Term if anything has changed.
+      Post a 2-3 sentence summary as your response. Keep the whole thing under
+      150 words of output.
 
-  # Weekly blog post — uncomment and adjust to enable
+  # --- Daily: Evening commit sweep ---
+  # Catches uncommitted work-in-progress before it gets lost overnight.
+  # - cron: "0 22 * * *"
+  #   task: >
+  #     Check for uncommitted or unstaged changes. If any look intentional
+  #     (not junk files or build artifacts), stage and commit them with a clear
+  #     message. Run tests if a test command is configured in CLAUDE.md.
+  #     Report what you found — "nothing to commit" is a fine answer.
+
+  # --- Weekly: Monday triage ---
+  # Re-prioritizes the backlog at the start of each week.
   # - cron: "0 9 * * 1"
   #   task: >
-  #     Write a short blog post (300-500 words) about the past week's work on this project.
-  #     What shipped, what didn't, what you learned, what surprised you.
-  #     Save it as blog/YYYY-MM-DD-weekly.md (create the blog/ directory if it doesn't exist).
-  #     Commit it to the current agent branch.
+  #     Read SOUL.md, MEMORY.md, and TASKS.md. Re-prioritize the backlog based
+  #     on current project state. Move anything stale (no progress in 2+ weeks)
+  #     to a Deferred section. Identify the top 3 things that should happen this
+  #     week and post them to Discord as a short plan.
+
+  # --- Weekly: Friday retrospective + blog post ---
+  # Creates a written record of the week's work.
+  # - cron: "0 17 * * 5"
+  #   task: >
+  #     Write a retrospective (200-400 words): what shipped, what didn't, what
+  #     you learned, what surprised you. Save it as blog/YYYY-MM-DD-weekly.md
+  #     (create the blog/ directory if it doesn't exist) and commit it.
+  #     Update MEMORY.md with anything durable learned this week.
+  #     Post a 2-3 sentence summary to Discord.
+
+  # --- Monthly: Changelog review + memory prune ---
+  # Keeps MEMORY.md lean and creates a monthly record.
+  # - cron: "0 9 1 * *"
+  #   task: >
+  #     Read CHANGELOG.md and TASKS.md. Write a monthly summary (200-300 words):
+  #     what shipped, how the project looks vs. a month ago, what next month
+  #     should focus on. Save as blog/YYYY-MM-monthly.md and commit it.
+  #     Prune stale Short-Term entries from MEMORY.md — anything more than
+  #     2 weeks old that hasn't been promoted to Long-Term can be removed.
+
+# ---------------------------------------------------------------------------
+# One-off !run task templates (copy-paste into Discord)
+# ---------------------------------------------------------------------------
+#
+# Do the work (open-ended session):
+#   !run myproject Read SOUL.md and MEMORY.md. Check TASKS.md for the
+#   highest-priority active item. Work on it. Commit any changes with a clear
+#   message. Report what you did and what's next.
+#
+# Onboard a new project (creates SOUL.md from scratch):
+#   !run myproject You are a new agent on this project. Read CLAUDE.md and
+#   explore the codebase. Write SOUL.md — give yourself a name (use a heraldic
+#   tincture: Or, Argent, Sable, Gules, Azure, Vert, Purpure), a role, and a
+#   personality that fits the project. Write initial MEMORY.md Core Memories
+#   based on what you learn. Introduce yourself with a short message.
+#
+# Documentation audit:
+#   !run myproject Compare the codebase to the README and any docs/. Find
+#   anything out of date, missing, or misleading. Update the docs to match
+#   reality. Commit the changes with a summary of what you updated.
+#
+# Dependency audit:
+#   !run myproject Check for outdated or vulnerable dependencies using the
+#   appropriate tool for this stack. Report any high-severity issues to Discord.
+#   Add anything that needs updating to TASKS.md.
+#
+# Code review pass:
+#   !run myproject Review the last 10 commits. Look for: missing tests, unclear
+#   variable names, functions doing too much, TODOs that should be tickets.
+#   Write findings to TASKS.md under a "Code Review YYYY-MM-DD" section.
+#   Report a 3-5 bullet summary.

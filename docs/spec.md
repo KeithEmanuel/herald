@@ -20,9 +20,10 @@ agents on a home server, not just the person who built it.
 - Message a Discord channel and have the relevant project agent respond
 - Get a daily status note from each project agent without opening a terminal
 - Have agents commit work to a branch and ask me before pushing
-- Add a new project by dropping a config file, not rewriting code
+- Add a new project via a Discord command — no YAML hand-editing required
 - Be called out (gently, then less gently) when I haven't touched a project in too long
 - Read weekly/monthly blog posts written by my agents about their work
+- Deploy project containers from Discord without SSHing into the server
 
 **As a project agent, I want to:**
 - Receive tasks via Discord and execute them in the project repo
@@ -30,10 +31,11 @@ agents on a home server, not just the person who built it.
 - Commit changes to a feature branch and request owner approval to push
 - Write blog posts about project progress and lessons learned
 - Coordinate with other agents (read-only: see what other projects are doing)
+- Appear in Discord with my own name and avatar, not as the generic Herald bot
 
 **As a self-hoster (open source user), I want to:**
 - Deploy Herald with a single `docker compose up` and a `.env` file
-- Register projects by dropping a YAML file — no code changes
+- Register projects via a Discord command — or by dropping a YAML file
 - Understand the config schema without reading source code
 - Trust that Herald won't push code without my approval
 
@@ -41,25 +43,50 @@ agents on a home server, not just the person who built it.
 
 ## Architecture
 
+Herald is a **long-running asyncio daemon** — not a collection of scripts. One process runs
+continuously, holding a persistent WebSocket to Discord and an APScheduler on the same event loop.
+
+```
+Discord WebSocket (discord.py)
+    ↓ commands / reactions
+    ↓ posts output via webhook (per-agent identity) or bot (system messages)
+APScheduler cron
+    ↓ fires tasks on schedule
+Serial FIFO Queue (task_queue.py)
+    ↓ one item at a time — no parallelism, ever
+Agent Runner            Deploy Runner
+`claude -p "<task>"     `docker compose
+ --print`                up --build -d`
+```
+
 ```
 herald/
-  __main__.py     # Entry point — loads env, starts bot
-  bot.py          # Discord bot — commands, routing, git approval flow
-  agent_runner.py # Wraps claude CLI — runs agent in project context, returns output
-  task_queue.py   # Serial asyncio queue — one agent run at a time globally
-  scheduler.py    # APScheduler — fires cron tasks per project config
-  config.py       # Pydantic config loader — reads projects/*.yaml
+  __main__.py     # Entry point — loads env, starts bot + event loop
+  bot.py          # Discord bot — commands, reactions, webhook posting, approval flow
+  agent_runner.py # Wraps claude CLI — runs agent subprocess, returns output
+  task_queue.py   # Serial asyncio FIFO queue — one task at a time globally
+  scheduler.py    # APScheduler — cron tasks per project, staggered by index
+  config.py       # Pydantic config loader — validates projects/*.yaml
   git_ops.py      # Git push/discard helpers for approval flow
-  SOUL.md         # Herald's persistent identity and memory (maintained by Herald)
-  projects/       # One YAML file per registered project (private — gitignored in user forks)
+  deploy.py       # docker compose up --build -d for project containers
+  activity.py     # Reads/writes data/activity.json — inactivity tracking
+  SOUL.md         # Argent's persistent identity (maintained by Argent)
+  MEMORY.md       # Working context, tiered memory (maintained by Argent)
+  projects/       # One YAML per registered project (private — gitignored)
     example.yaml  # Template / docs-by-example
+  templates/      # Starter kit: SOUL.md, MEMORY.md, CLAUDE.md, humans/
   docs/
-    spec.md       # This file
+    spec.md           # This file
+    roadmap.md        # Herald priorities by phase
+    agent-pattern.md  # Reusable agent identity pattern
   Dockerfile
-  compose.yaml    # Designed to drop into docker/<service>/ on server
+  compose.yaml    # Standalone Herald service (not nested in main docker stack)
   pyproject.toml
   .env.example
 ```
+
+**Key invariant:** One agent runs at a time, globally. The queue is serial and unbounded.
+Never break this — it's what prevents rate limit collisions and keeps cost predictable.
 
 ---
 
@@ -68,9 +95,14 @@ herald/
 ```yaml
 # projects/example.yaml — copy and fill in for each project
 name: myproject
-display_name: "My Project (AgentName)"
-path: /repos/myproject          # absolute path in the Herald container (bind-mounted)
+display_name: "My Project"
+path: /repos/myproject          # absolute path inside the Herald container (bind-mounted)
 discord_channel_id: "123456789" # right-click channel in Discord → Copy Channel ID
+
+# Optional: per-agent Discord identity via webhook
+# Herald creates this automatically on first run if the bot has Manage Webhooks permission.
+# Store the generated URL here (or let Herald manage it in data/webhooks.json).
+agent_avatar: argent.png        # path relative to project repo root
 
 git:
   auto_commit: true               # agents may commit locally
@@ -80,10 +112,10 @@ git:
 schedule:
   - cron: "0 8 * * *"            # 8am daily (staggered +15min per project index)
     task: >
-      Read SOUL.md and memory/MEMORY.md. Write a brief journal entry noting
+      Read SOUL.md and MEMORY.md. Write a brief journal entry noting
       project status, any open questions, and anything that looks inconsistent
-      or needs attention. Update SOUL.md Core Memories if anything is worth
-      remembering. Keep it under 200 words.
+      or needs attention. Update MEMORY.md if anything is worth remembering.
+      Keep it under 200 words.
 
   - cron: "0 9 * * 1"            # 9am every Monday — optional blog post
     task: >
@@ -92,32 +124,60 @@ schedule:
       Save it as blog/YYYY-MM-DD-weekly.md (create the blog/ dir if it doesn't exist).
       Commit it to the current agent branch.
 
-# Optional: accountability config (Herald-level feature, not per-project)
-# accountability:
-#   inactivity_days: 14          # warn after this many days without a run
-#   roast_after_days: 21         # escalate to roast mode
+deploy:
+  compose_path: null              # e.g. /mnt/lvm-nvme/herald/deployments/myproject/compose.yaml
+  auto_deploy_on_push: false      # if true, deploys automatically after a 👍 push
 ```
 
 ---
 
 ## Discord Interface
 
+### Commands
+
 | Command | Description |
 |---|---|
 | `!run <project> <task>` | Trigger a one-off agent run |
+| `!deploy <project>` | Deploy the project's Docker container |
 | `!status` | Show queue depth and currently running job |
-| `!projects` | List registered projects |
-| Agent messages auto-post to project channel | Cron results, commit proposals, blog posts, etc. |
+| `!projects` | List registered projects and their last-active time |
+| `!addproject <name> <path> [cron]` | Register a new project (creates YAML + channel + webhook) |
+| `!schedule <project> <cron>` | Set or update a project's cron schedule |
+| `!reload` | Hot-reload all project configs without restarting Herald |
 
-**Git approval flow:**
+### Git Approval Flow
+
 1. Agent commits locally to `agent/projectname-YYYYMMDD-HHMMSS`
-2. Herald posts to Discord: "Ready to push `agent/projectname-...` — 2 commits."
-3. Owner reacts 👍 → Herald pushes. Owner reacts 👎 → branch is discarded.
+2. Herald posts to project channel: "Ready to push — 2 commits. [summary]"
+3. Operator reacts 👍 → Herald pushes (and auto-deploys if configured). Reacts 👎 → branch discarded.
 
-**Output formatting:**
+### Output Formatting
+
 - Short output (< 1900 chars): posted as a plain message with code block
 - Long output: attached as a text file
 - Structured results (future): Discord embeds with title/description/fields
+
+---
+
+## Agent Identity in Discord
+
+Each project agent appears in Discord with its own name and avatar, not as the generic Herald bot.
+This is implemented via **Discord webhooks** — one per project channel.
+
+**Why webhooks, not multiple bot accounts:**
+- Running N Discord clients (one per agent) would require N tokens and N persistent connections
+- Webhooks let Herald post as any identity from a single bot connection
+- The Herald bot still handles *receiving* commands; webhooks handle *posting* agent output
+
+**Setup flow (automated):**
+1. Bot requires `Manage Webhooks` + `Manage Channels` permissions
+2. On `!addproject`, Herald creates the project channel, then creates a webhook in it
+3. Herald reads the project's `agent_avatar` file (PNG) and sets it as the webhook avatar
+4. Webhook URL is stored in `data/webhooks.json` (persisted via Docker named volume)
+5. All agent output posts go through the webhook; system messages come from the bot
+
+**Manual setup:** If you prefer, you can create the webhook in Discord (channel settings →
+Integrations → Webhooks) and paste the URL into `data/webhooks.json` yourself.
 
 ---
 
@@ -131,10 +191,8 @@ Herald tracks the last time each project had an agent run. If a project goes qui
 | 21 | More direct check-in: "Is this still a priority?" |
 | 28+ | Full roast. No mercy. The owner gave consent. |
 
-The activity log is stored in a lightweight JSON file (`data/activity.json`) persisted via Docker volume.
-
-**Implementation:** stored as a thin JSON log; Herald's scheduler checks it daily and fires nudge
-tasks to the Herald bot's own channel (or the project channel, configurable).
+The activity log is stored in `data/activity.json`, persisted via Docker named volume.
+Herald's scheduler checks it daily at 9am.
 
 ---
 
@@ -173,28 +231,64 @@ Herald invokes Claude Code CLI non-interactively:
 cd <project_path> && claude -p "<task>" --print
 ```
 
-Claude Code reads the project's CLAUDE.md for context (including SOUL.md reference).
-All of Claude Code's tools (Read, Write, Edit, Bash, Glob, Grep) are available to the agent.
-Authentication via `ANTHROPIC_API_KEY` environment variable.
+Claude Code reads the project's `CLAUDE.md` for context (which references `SOUL.md` and
+`MEMORY.md`). All Claude Code tools (Read, Write, Edit, Bash, Glob, Grep, Task) are available.
+
+**Authentication:** Subscription auth via `~/.claude/` (OAuth, not API key). Credentials
+persist via the `herald_claude_config` Docker named volume. Authenticate once interactively
+inside the container; all subsequent runs use the stored credentials.
 
 Requires Node.js + Claude Code CLI in the Herald Docker image.
 
 ---
 
-## Deployment (Server Pattern)
+## Deployment
 
-Server pattern: `docker/<service>/compose.yaml` with bind mounts for data.
+Herald runs as an **independent service** — not nested inside your main docker stack.
+It manages project containers via the Docker socket.
 
 ```
-docker/herald/
-  compose.yaml         # references the herald image
-  .env                 # DISCORD_TOKEN, ANTHROPIC_API_KEY, etc.
-  projects/            # project config files (bind-mounted in, NOT in public repo)
-    enchiridion.yaml
-    chortle.yaml
+/mnt/lvm-nvme/herald/       # Herald's runtime home on the host
+  compose.yaml              # Herald's own service definition
+  .env                      # DISCORD_TOKEN, ANTHROPIC_API_KEY
+  projects/                 # Private YAML configs (gitignored)
+  deployments/              # Project compose stacks managed by Herald
+    enchiridion/
+      compose.yaml
+    chortle/
+      compose.yaml
 ```
 
-Project repos are bind-mounted into the Herald container as read-write volumes.
+**Docker socket:** Herald bind-mounts `/var/run/docker.sock` to run `docker compose up --build -d`
+for project containers. This grants Herald full control over host Docker — it's intentional.
+
+**Path invariant:** Project compose stacks must be bind-mounted at the same absolute path inside
+the Herald container as on the host. The Docker daemon resolves compose file paths from the
+host perspective, so `/mnt/lvm-nvme/herald/deployments` must appear at that exact path inside
+the container.
+
+**Caddy routing:** Each project container joins the `caddy_net` external Docker network.
+Caddy routing is configured manually per project (not automated by Herald).
+
+**Named volumes:**
+- `herald_data` → `/app/data` — activity logs, webhook URLs, runtime state
+- `herald_claude_config` → `/root/.config/claude` — Claude Code auth (subscription OAuth)
+- `herald_claude_memory` → `/root/.claude` — Claude Code auto-memory
+
+---
+
+## Adding a New Project
+
+**Via Discord (recommended):**
+```
+!addproject chortle /mnt/lvm-nvme/chortle
+```
+Herald creates the channel, webhook, and YAML. Hot-reloads config. Done.
+
+**Via YAML (manual):**
+1. Copy `projects/example.yaml` → `projects/chortle.yaml`
+2. Fill in `name`, `display_name`, `path`, `discord_channel_id`
+3. Run `!reload` in Discord (or restart Herald)
 
 ---
 
@@ -206,6 +300,7 @@ Herald is designed to be deployed by anyone, not just the original author.
   in `projects/*.yaml` (private, gitignored in user deployments).
 - **`projects/example.yaml`** serves as the primary documentation for the config schema.
 - **Single `docker compose up` deployment** — no manual setup steps beyond `.env`.
+- **`!addproject` for onboarding** — drop a new project in without touching files or restarting.
 - **SOUL.md is the agent's own file** — not part of the public API, but included because it's
   what makes Herald interesting. Users can give their Herald its own identity.
 
@@ -213,9 +308,10 @@ Herald is designed to be deployed by anyone, not just the original author.
 
 ## What's Out of Scope (for now)
 
-- Agent ↔ agent direct communication (they share a Discord server — that's enough)
+- Agent ↔ agent direct communication (they share a Discord server — that's enough for now)
 - Web UI for Herald
 - Per-project token budgets
 - Google Assistant integration (that's Chortle's problem)
 - Discord embed formatting (current output is plaintext code blocks — good enough for now)
 - Blog webhook output (file commits are fine for Phase 1)
+- Kubernetes (single server, Docker Compose is the correct scale)

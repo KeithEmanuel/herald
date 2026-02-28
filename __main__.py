@@ -48,8 +48,17 @@ def main() -> None:
     # Import here so env vars are loaded before module-level constants are evaluated
     from bot import HeraldBot
 
+    # Optional: restrict push approvals to a specific Discord user ID
+    operator_id_str = os.environ.get("HERALD_OPERATOR_ID")
+    operator_id = int(operator_id_str) if operator_id_str else None
+    if operator_id is None:
+        log.warning(
+            "HERALD_OPERATOR_ID is not set — any server member can approve push proposals. "
+            "Set it in .env to restrict approvals to the operator."
+        )
+
     log.info("Starting Herald — projects dir: %s", projects_dir)
-    bot = HeraldBot(projects_dir)
+    bot = HeraldBot(projects_dir, operator_id=operator_id)
 
     # bot.run() starts the event loop and blocks until the bot disconnects
     bot.run(token)
