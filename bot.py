@@ -386,6 +386,11 @@ class HeraldBot(commands.Bot):
             return
         await channel.send(content)
 
+    async def on_message(self, message: discord.Message) -> None:
+        """Debug: log all incoming messages to diagnose intent delivery."""
+        log.info("MSG from %s in %s: %r", message.author, message.channel, message.content[:60])
+        await super().on_message(message)
+
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
         """Send a helpful error message instead of silently swallowing command errors."""
         if isinstance(error, commands.MissingRequiredArgument):
