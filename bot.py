@@ -9,6 +9,8 @@ Commands:
   !deploy <project>       — build and deploy the project's Docker container
   !status                 — show queue depth and currently running job
   !projects               — list registered projects
+  !webhook <project>      — create/update the agent webhook (attach an image to set avatar)
+  !addproject <name> <repo_url> [agent_name] [#channel]  — register a new project end-to-end
 
 Git approval flow:
   After each agent run, Herald checks for unpushed agent/* branches.
@@ -18,8 +20,12 @@ Git approval flow:
 """
 
 import asyncio
+import json
 import logging
+import subprocess
 from pathlib import Path
+
+import yaml
 
 import discord
 from discord.ext import commands
@@ -70,7 +76,11 @@ class HeraldCommands(commands.Cog, name="Herald"):
 
         async def on_complete(output: str) -> None:
             body = truncate_for_discord(output)
-            await ctx.send(f"**Agent run complete** `[{project}]`\n```\n{body}\n```")
+            await self.bot._post_as_agent(
+                project,
+                f"**Agent run complete** `[{project}]`\n```\n{body}\n```",
+                ctx.channel,
+            )
             # After each run, check for unpushed agent branches and propose a push if needed
             await self.bot._check_and_propose_push(project, ctx.channel)
 
@@ -147,6 +157,191 @@ class HeraldCommands(commands.Cog, name="Herald"):
         )
         await self.bot._enqueue_deploy(project, ctx.channel)
 
+    @commands.command(name="webhook")
+    async def cmd_webhook(self, ctx: commands.Context, project: str) -> None:
+        """
+        !webhook <project>
+
+        Create (or replace) the agent webhook for a project. The webhook makes agent
+        output appear as the agent's own Discord identity instead of the Herald bot.
+
+        Attach an image to this message to set the agent's avatar. No attachment means
+        Discord's default webhook avatar is used.
+
+        Requires the Herald bot to have Manage Webhooks permission in the project channel.
+        """
+        if project not in self.bot.projects:
+            await ctx.send(
+                f"Unknown project `{project}`. Try `!projects` to see registered projects."
+            )
+            return
+
+        project_config = self.bot.projects[project]
+        channel = self.bot.get_channel(int(project_config.discord_channel_id))
+        if channel is None:
+            await ctx.send(f"Cannot find channel for `{project}` — check the channel ID in the project config.")
+            return
+
+        # Download avatar bytes from attachment if one was included with the command
+        avatar_bytes: bytes | None = None
+        if ctx.message.attachments:
+            avatar_bytes = await ctx.message.attachments[0].read()
+
+        username = project_config.agent_name or project_config.display_name
+
+        try:
+            webhook = await channel.create_webhook(
+                name=username,
+                avatar=avatar_bytes,
+                reason=f"Herald agent webhook for project '{project}'",
+            )
+        except discord.Forbidden:
+            await ctx.send(
+                f"Missing **Manage Webhooks** permission in {channel.mention}. "
+                f"Grant it to the Herald bot in the channel's permission settings."
+            )
+            return
+        except Exception as e:
+            log.exception("Failed to create webhook for project '%s'", project)
+            await ctx.send(f"Failed to create webhook: {e}")
+            return
+
+        self.bot._save_webhook(project, webhook.url)
+        avatar_note = " with custom avatar" if avatar_bytes else " (no avatar set — attach an image to this command to set one)"
+        await ctx.send(
+            f"Webhook created for `{project}`{avatar_note}. "
+            f"Agent will post as **{username}** in {channel.mention}."
+        )
+        log.info("Webhook created for project '%s' in channel %d", project, channel.id)
+
+    @commands.command(name="addproject")
+    async def cmd_addproject(
+        self,
+        ctx: commands.Context,
+        name: str,
+        repo_url: str,
+        agent_name: str = None,
+        channel: discord.TextChannel = None,
+    ) -> None:
+        """
+        !addproject <name> <repo_url> [agent_name] [#existing-channel]
+
+        Register a new project end-to-end:
+          1. Clone the repo to repos/<name> (skips if already cloned)
+          2. Create a private agent channel (or use #existing-channel if provided)
+          3. Create the agent webhook (attach an image for the avatar)
+          4. Write projects/<name>.yaml
+          5. Hot-reload the project into Herald immediately
+
+        agent_name defaults to the project name (title-cased) if not provided.
+        Pass an existing #channel to skip channel creation (useful when the channel exists).
+
+        Requires Herald bot to have Manage Channels and Manage Webhooks permissions.
+        """
+        if ctx.guild is None:
+            await ctx.send("This command must be run in a server channel, not a DM.")
+            return
+
+        if name in self.bot.projects:
+            await ctx.send(f"Project `{name}` is already registered. Use `!projects` to see all projects.")
+            return
+
+        if agent_name is None:
+            agent_name = name.replace("-", " ").replace("_", " ").title()
+        display_name = name.replace("-", " ").replace("_", " ").title()
+
+        await ctx.send(f"Setting up project `{name}` (agent: **{agent_name}**)...")
+
+        # --- Step 1: Clone or verify repo ---
+        repo_path = self.bot.repos_dir / name
+        clone_ok, clone_msg = await self.bot._clone_or_verify_repo(repo_url, repo_path)
+        if not clone_ok:
+            await ctx.send(f"Repo setup failed: {clone_msg}")
+            return
+        await ctx.send(f"Repo: {clone_msg}")
+
+        # --- Step 2: Create private agent channel (or use provided existing one) ---
+        if channel is None:
+            guild = ctx.guild
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                guild.me: discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    manage_webhooks=True,
+                ),
+            }
+            # Grant operator explicit access to their own agent channel
+            if self.bot.operator_id:
+                operator_member = guild.get_member(self.bot.operator_id)
+                if operator_member:
+                    overwrites[operator_member] = discord.PermissionOverwrite(
+                        view_channel=True,
+                        send_messages=True,
+                        read_message_history=True,
+                    )
+            try:
+                channel = await guild.create_text_channel(
+                    name=agent_name.lower(),
+                    overwrites=overwrites,
+                    topic=f"{agent_name} — agent for {display_name}, managed by Herald",
+                )
+            except discord.Forbidden:
+                await ctx.send("Missing **Manage Channels** permission. Grant it to the Herald bot in server settings.")
+                return
+            except Exception as e:
+                await ctx.send(f"Failed to create channel: {e}")
+                return
+            await ctx.send(f"Channel: {channel.mention} (private)")
+        else:
+            await ctx.send(f"Channel: {channel.mention} (existing)")
+
+        # --- Step 3: Create webhook ---
+        avatar_bytes: bytes | None = None
+        if ctx.message.attachments:
+            avatar_bytes = await ctx.message.attachments[0].read()
+
+        webhook_ok = False
+        try:
+            webhook = await channel.create_webhook(
+                name=agent_name,
+                avatar=avatar_bytes,
+                reason=f"Herald agent webhook for project '{name}'",
+            )
+            self.bot._save_webhook(name, webhook.url)
+            webhook_ok = True
+            avatar_note = " with avatar" if avatar_bytes else ""
+            await ctx.send(f"Webhook: created{avatar_note}")
+        except Exception as e:
+            log.exception("Failed to create webhook for '%s'", name)
+            await ctx.send(f"Webhook: failed ({e}) — run `!webhook {name}` later to set it up")
+
+        # --- Step 4: Write project YAML ---
+        yaml_data = {
+            "name": name,
+            "display_name": display_name,
+            "agent_name": agent_name,
+            "path": str(repo_path),
+            "discord_channel_id": str(channel.id),
+            "git": {
+                "push_requires_approval": True,
+                "branch_prefix": f"agent/{name}",
+            },
+        }
+        yaml_path = self.bot.projects_dir / f"{name}.yaml"
+        yaml_path.write_text(yaml.dump(yaml_data, default_flow_style=False, sort_keys=False))
+        await ctx.send(f"Config: `projects/{name}.yaml` written")
+
+        # --- Step 5: Hot-reload into active projects (no restart needed) ---
+        self.bot.projects[name] = ProjectConfig(**yaml_data)
+        log.info("Project '%s' added via !addproject, active immediately", name)
+
+        await ctx.send(
+            f"**`{name}` is ready.** Try `!run {name} <task>` to start.\n"
+            f"Scheduled tasks (if added to the YAML later) activate on next Herald restart."
+        )
+
 
 class HeraldBot(commands.Bot):
     """
@@ -170,6 +365,11 @@ class HeraldBot(commands.Bot):
         self.projects: dict[str, ProjectConfig] = load_projects(projects_dir)
         self.task_queue = TaskQueue()
 
+        # Stored for !addproject: writing new project YAMLs and cloning repos.
+        # repos_dir follows the HERALD_ROOT layout convention: projects/../repos/
+        self.projects_dir = projects_dir
+        self.repos_dir = projects_dir.parent / "repos"
+
         # If set, only this Discord user ID can approve/discard push proposals.
         # Sourced from HERALD_OPERATOR_ID env var. None = any server member (not recommended).
         self.operator_id: int | None = operator_id
@@ -178,6 +378,11 @@ class HeraldBot(commands.Bot):
         # Maps Discord message_id → {"project_name": str, "branch": str}
         # When the operator reacts, we look up the message here to know what to push/discard.
         self._pending_pushes: dict[int, dict] = {}
+
+        # Webhook URLs for per-agent Discord identity.
+        # Maps project_name → webhook URL. Loaded from data/webhooks.json on startup,
+        # updated by !webhook command. Persisted via the herald_data named volume.
+        self._webhook_urls: dict[str, str] = self._load_webhooks()
 
     # -------------------------------------------------------------------------
     # Lifecycle
@@ -367,6 +572,35 @@ class HeraldBot(commands.Bot):
     # Helpers
     # -------------------------------------------------------------------------
 
+    async def _post_as_agent(
+        self, project_name: str, content: str, channel: discord.TextChannel
+    ) -> None:
+        """
+        Post a message as the project's agent identity.
+
+        If the project has a webhook_url configured, posts via that webhook using
+        agent_name (or display_name) and optionally webhook_avatar_url. This makes
+        agent output appear as a distinct Discord identity (e.g. "Argent") rather
+        than the Herald bot account.
+
+        Falls back to channel.send if no webhook is configured or if the webhook fails.
+        """
+        project = self.projects[project_name]
+        # Prefer dynamically-created webhook (from !webhook command) over static config URL
+        webhook_url = self._webhook_urls.get(project_name) or project.webhook_url
+        if webhook_url:
+            try:
+                webhook = discord.Webhook.from_url(webhook_url, client=self)
+                username = project.agent_name or project.display_name
+                # No avatar_url here — the webhook already has the avatar set on creation
+                await webhook.send(content, username=username)
+                return
+            except Exception:
+                log.exception(
+                    "Webhook post failed for %s, falling back to bot post", project_name
+                )
+        await channel.send(content)
+
     async def _enqueue_deploy(self, project_name: str, channel: discord.TextChannel) -> None:
         """
         Enqueue a deploy task for project_name. Posts output to channel when complete.
@@ -394,6 +628,48 @@ class HeraldBot(commands.Bot):
             record_activity=False,  # deploys don't count as project activity
         ))
         log.info("Deploy task enqueued for project '%s'", project_name)
+
+    async def _clone_or_verify_repo(self, repo_url: str, repo_path: Path) -> tuple[bool, str]:
+        """
+        Clone repo_url to repo_path, or verify it already exists.
+        Returns (success, message) for confirmation/error reporting.
+        """
+        if repo_path.exists():
+            if (repo_path / ".git").exists():
+                return True, f"using existing repo at `{repo_path}`"
+            else:
+                return False, f"`{repo_path}` exists but is not a git repo"
+
+        repo_path.parent.mkdir(parents=True, exist_ok=True)
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "clone", repo_url, str(repo_path)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return True, f"cloned `{repo_url}` to `{repo_path}`"
+        else:
+            return False, f"git clone failed:\n```\n{result.stderr.strip()}\n```"
+
+    _WEBHOOKS_FILE = Path("data/webhooks.json")
+
+    @staticmethod
+    def _load_webhooks() -> dict[str, str]:
+        """Load webhook URLs from data/webhooks.json, returning {} if the file doesn't exist."""
+        if HeraldBot._WEBHOOKS_FILE.exists():
+            try:
+                return json.loads(HeraldBot._WEBHOOKS_FILE.read_text())
+            except Exception:
+                log.warning("Failed to load webhooks file — starting with empty webhook map")
+        return {}
+
+    def _save_webhook(self, project_name: str, url: str) -> None:
+        """Persist a webhook URL for a project to data/webhooks.json."""
+        self._webhook_urls[project_name] = url
+        self._WEBHOOKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self._WEBHOOKS_FILE.write_text(json.dumps(self._webhook_urls, indent=2))
+        log.info("Saved webhook for project '%s'", project_name)
 
     async def _post_to_channel(self, channel_id: int, content: str) -> None:
         """Post a message to a Discord channel by ID. Used by the scheduler."""
