@@ -100,9 +100,22 @@ class HeraldBot(commands.Bot):
         )
 
     async def on_ready(self) -> None:
-        project_names = ", ".join(self.projects.keys())
+        import os
+        project_names = ", ".join(self.projects.keys()) or "none"
         log.info("Herald is online as %s — projects: %s", self.user, project_names)
         print(f"Herald online as {self.user} | Projects: {project_names}")
+
+        # Optional startup ping — set HERALD_GENERAL_CHANNEL_ID in .env to receive it
+        general_channel_id = os.environ.get("HERALD_GENERAL_CHANNEL_ID")
+        if general_channel_id:
+            channel = self.get_channel(int(general_channel_id))
+            if channel:
+                n = len(self.projects)
+                project_list = f": {project_names}" if self.projects else ""
+                await channel.send(
+                    f"Herald online — {n} project(s) loaded{project_list}"
+                )
+
         # Check that each project has a SOUL.md — a project without a soul is just files.
         await self._check_project_souls()
 
