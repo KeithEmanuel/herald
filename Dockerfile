@@ -10,7 +10,7 @@ WORKDIR /app
 #     Works with both Docker (/var/run/docker.sock) and Podman rootless (via
 #     HERALD_DOCKER_SOCKET in .env — Podman provides a Docker-compatible API).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl git gnupg ca-certificates \
+    curl git gnupg ca-certificates openssh-client \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && install -m 0755 -d /etc/apt/keyrings \

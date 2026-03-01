@@ -449,20 +449,25 @@ class HeraldCommands(commands.Cog, name="Herald"):
         name: str,
         repo_url: str,
         agent_name: str = None,
-        channel: discord.TextChannel = None,
+        channel_ref: str = None,
     ) -> None:
         """
-        !addproject <name> <repo_url> [agent_name] [#existing-channel]
+        !addproject <name> <repo_url> [agent_name] [channel]
 
         Register a new project end-to-end:
           1. Clone the repo to repos/<name> (skips if already cloned)
-          2. Create a private agent channel (or use #existing-channel if provided)
+          2. Create a private agent channel (or use an existing one if provided)
           3. Create the agent webhook (attach an image for the avatar)
           4. Write projects/<name>.yaml
           5. Hot-reload the project into Herald immediately
 
         agent_name defaults to the project name (title-cased) if not provided.
-        Pass an existing #channel to skip channel creation (useful when the channel exists).
+
+        channel can be:
+          - A channel name:    sable
+          - A channel mention: #sable
+          - A channel ID:      1234567890123456789
+        Omit to create a new private channel automatically.
 
         Requires Herald bot to have Manage Channels and Manage Webhooks permissions.
         """
@@ -477,6 +482,34 @@ class HeraldCommands(commands.Cog, name="Herald"):
         if agent_name is None:
             agent_name = name.replace("-", " ").replace("_", " ").title()
         display_name = name.replace("-", " ").replace("_", " ").title()
+
+        # Resolve channel_ref to a TextChannel by ID, mention, or name.
+        # Using a plain string param avoids discord.py's converter raising ChannelNotFound
+        # when the user types a channel name without a # prefix.
+        channel: discord.TextChannel | None = None
+        if channel_ref is not None:
+            raw = channel_ref.strip().lstrip("#")
+            # Try as numeric ID first
+            if raw.isdigit():
+                channel = ctx.guild.get_channel(int(raw))
+            # Try stripping mention formatting (<#1234>)
+            if channel is None and raw.startswith("<#") and raw.endswith(">"):
+                cid = raw[2:-1]
+                if cid.isdigit():
+                    channel = ctx.guild.get_channel(int(cid))
+            # Try by name (case-insensitive)
+            if channel is None:
+                channel = discord.utils.find(
+                    lambda c: c.name.lower() == raw.lower() and isinstance(c, discord.TextChannel),
+                    ctx.guild.channels,
+                )
+            if channel is None:
+                await ctx.send(
+                    f"Channel `{channel_ref}` not found. "
+                    f"Use a channel name, `#mention`, or channel ID. "
+                    f"Omit the argument to create a new private channel automatically."
+                )
+                return
 
         await ctx.send(f"Setting up project `{name}` (agent: **{agent_name}**)...")
 
