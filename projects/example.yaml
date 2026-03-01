@@ -19,10 +19,12 @@ path: /srv/herald/repos/myproject
 # (requires Developer Mode: User Settings → Advanced → Developer Mode)
 discord_channel_id: "YOUR_CHANNEL_ID_HERE"
 
-# Path to the agent's avatar image, relative to the project repo root.
-# Herald uses this when creating the project's Discord webhook.
-# PNG recommended. If omitted, the webhook uses the default bot avatar.
-agent_avatar: argent.png
+# Optional: per-agent Discord identity.
+# !addproject sets these automatically when you attach an avatar image.
+# To update the webhook later: !webhook myproject  (attach new image for avatar)
+agent_name: "Argent"            # display name used when posting via webhook
+# webhook_url: null             # fallback static URL; Herald stores the dynamic URL in data/webhooks.json
+# webhook_avatar_url: null      # URL for per-post avatar override — usually leave null
 
 git:
   # If true, the Claude agent may commit locally during a run.
@@ -34,8 +36,9 @@ git:
   push_requires_approval: true
 
   # All agent commits go to branches with this prefix.
+  # Use "agent/<name>" so branches are namespaced per project.
   # Example result: agent/myproject-20260224-080000
-  branch_prefix: "agent/"
+  branch_prefix: "agent/myproject"
 
 # Docker deployment config. Optional — omit if you don't want Herald to manage deploys.
 #

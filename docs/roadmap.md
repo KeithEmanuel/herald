@@ -34,25 +34,34 @@
 
 These complete the core experience before going public.
 
-- [ ] **Webhook support** — per-agent Discord identity (name + avatar) via webhook.
-      `!addproject` creates channel + webhook automatically (requires `Manage Webhooks` +
-      `Manage Channels` permissions). Webhook URLs stored in `data/webhooks.json`.
-      Agent output posts via webhook; system messages use the bot.
+- [x] **Webhook support** — per-agent Discord identity (name + avatar) via webhook.
+      `!addproject` creates channel + webhook automatically. `!webhook <project>` to
+      create/update separately. URLs stored in `data/webhooks.json`.
 
-- [ ] **`!addproject <name> <path> [cron]`** — register a new project from Discord.
-      Creates the Discord channel, webhook, and `projects/<name>.yaml`. No YAML hand-editing.
+- [x] **`!addproject <name> <repo_url> [agent_name] [#channel]`** — register a new project
+      end-to-end from Discord. Clones repo, creates private channel, creates webhook,
+      writes YAML, hot-reloads. Default 8am daily schedule included automatically.
 
-- [ ] **Hot-reload config** — `!reload` command re-reads all YAMLs and updates the scheduler
-      at runtime. No restart required when adding or editing projects.
+- [x] **Hot-reload config** — `!reload` re-reads all YAMLs, updates `self.projects`, rebuilds
+      `_channel_to_project` map, and restarts the scheduler. No Herald restart needed.
 
-- [ ] **`!schedule <project> <cron>`** — set or update a project's cron schedule from Discord.
+- [x] **`!schedule <project> <cron>`** — set or update a project's cron schedule from Discord.
+      Updates YAML and hot-reloads scheduler immediately.
 
-- [ ] **Herald manages itself** — `projects/herald.yaml` registers Herald as its own project
-      (Argent channel = Herald's Discord channel). Argent can run on Herald's codebase.
-      `auto_deploy_on_push: true` so Argent can ship Herald's own updates.
+- [x] **Herald manages itself** — `projects/herald.yaml` registered via `!addproject`. Argent
+      runs on Herald's own codebase. `auto_deploy_on_push` can be enabled once
+      `deploy.compose_path` is set.
 
-- [ ] **Soul creation flow** — bot currently warns when a project lacks `SOUL.md`; should post
-      a proposal and actually generate one via a bootstrapping agent run.
+- [x] **Soul creation flow** — on startup, projects missing `SOUL.md` automatically get a
+      bootstrapping agent run queued. Agent explores codebase, writes SOUL.md + initial
+      MEMORY.md, and posts a self-introduction. No manual intervention needed.
+
+- [x] **Conversational project channels** — plain messages in project channels automatically
+      trigger agent runs with recent channel history as context. Short replies like "yes"
+      or "do the top item" work because the agent sees what it said in previous messages.
+
+- [x] **Usage limit handling** — scheduled tasks skip silently when API rate/quota limits are
+      hit (log warning only). Interactive runs still surface the error.
 
 - [ ] **Discord embed formatting** — push proposals and run summaries should use Discord embeds
       (fields, colors, timestamp) rather than plain text code blocks.
@@ -62,12 +71,6 @@ These complete the core experience before going public.
 
 - [ ] **Blog aggregation** — agents write `blog/YYYY-MM-DD-*.md` in their project repos;
       Herald aggregates and posts a weekly digest to a Herald-level Discord channel.
-
-- [ ] **Argent chat** — non-`!command` messages in the `#argent` channel get a conversational
-      response from Herald. Herald knows its own state (queue, projects, activity) and can
-      trigger commands on your behalf. Pluggable backend via `HERALD_CHAT_BACKEND` env var:
-      `claude-cli` (default, uses subscription), `anthropic` (API key, Haiku), or `ollama`
-      (local, free). Ollama runs as an optional sidecar in `compose.yaml`.
 
 ---
 

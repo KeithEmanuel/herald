@@ -96,18 +96,20 @@ Never break this — it's what prevents rate limit collisions and keeps cost pre
 # projects/example.yaml — copy and fill in for each project
 name: myproject
 display_name: "My Project"
-path: /srv/herald/repos/myproject  # absolute path — under HERALD_ROOT/repos/
-discord_channel_id: "123456789" # right-click channel in Discord → Copy Channel ID
+path: /srv/herald/repos/myproject  # absolute path inside Herald container (same as host — see path invariant)
+discord_channel_id: "123456789"    # right-click channel in Discord → Copy Channel ID
 
-# Optional: per-agent Discord identity via webhook
-# Herald creates this automatically on first run if the bot has Manage Webhooks permission.
-# Store the generated URL here (or let Herald manage it in data/webhooks.json).
-agent_avatar: argent.png        # path relative to project repo root
+# Optional: per-agent Discord identity
+# When set, agent output posts appear as the agent, not the Herald bot.
+# !addproject sets these automatically. !webhook creates/updates the webhook.
+agent_name: "Argent"              # display name used in webhook posts
+webhook_url: null                 # static fallback URL; dynamic URL stored in data/webhooks.json
+webhook_avatar_url: null          # URL to an image for per-post avatar override (usually leave null)
 
 git:
   auto_commit: true               # agents may commit locally
   push_requires_approval: true    # must get 👍 in Discord before git push
-  branch_prefix: "agent/"         # all agent commits go to agent/* branches
+  branch_prefix: "agent/myproject" # all agent commits go to this branch prefix
 
 schedule:
   - cron: "0 8 * * *"            # 8am daily (staggered +15min per project index)
@@ -137,13 +139,18 @@ deploy:
 
 | Command | Description |
 |---|---|
-| `!run <project> <task>` | Trigger a one-off agent run |
+| `!run <project> <task>` | Trigger a one-off agent run (posts result to project channel) |
 | `!deploy <project>` | Deploy the project's Docker container |
 | `!status` | Show queue depth and currently running job |
-| `!projects` | List registered projects and their last-active time |
-| `!addproject <name> <path> [cron]` | Register a new project (creates YAML + channel + webhook) |
-| `!schedule <project> <cron>` | Set or update a project's cron schedule |
-| `!reload` | Hot-reload all project configs without restarting Herald |
+| `!projects` | List registered projects and their channel |
+| `!addproject <name> <repo_url> [agent_name] [#channel]` | Register a new project end-to-end |
+| `!webhook <project>` | Create/update the agent's Discord webhook (attach image for avatar) |
+| `!schedule <project> <cron>` | Set/update the project's cron schedule (e.g. `0 8 * * *`) |
+| `!reload` | Hot-reload all project YAMLs and restart the scheduler |
+
+**Direct messages:** Posting a plain (non-`!`) message in a project's Discord channel
+automatically queues a task for that agent. Recent channel history is included as context,
+so short replies like "yes" or "do the top item" work conversationally.
 
 ### Git Approval Flow
 
@@ -169,15 +176,31 @@ This is implemented via **Discord webhooks** — one per project channel.
 - Webhooks let Herald post as any identity from a single bot connection
 - The Herald bot still handles *receiving* commands; webhooks handle *posting* agent output
 
-**Setup flow (automated):**
-1. Bot requires `Manage Webhooks` + `Manage Channels` permissions
-2. On `!addproject`, Herald creates the project channel, then creates a webhook in it
-3. Herald reads the project's `agent_avatar` file (PNG) and sets it as the webhook avatar
-4. Webhook URL is stored in `data/webhooks.json` (persisted via Docker named volume)
-5. All agent output posts go through the webhook; system messages come from the bot
+**Setup flow (via `!addproject`):**
+1. Bot requires `Manage Webhooks` + `Manage Channels` permissions in the server
+2. `!addproject <name> <repo_url> [agent_name]` clones the repo, creates a private channel,
+   creates a webhook (attach an image to the command to set the agent's avatar), and writes
+   the project YAML — all in one step
+3. Webhook URL stored in `data/webhooks.json` (persisted via Docker named volume); never in git
+4. All agent output posts go through the webhook; system messages come from the bot
 
-**Manual setup:** If you prefer, you can create the webhook in Discord (channel settings →
-Integrations → Webhooks) and paste the URL into `data/webhooks.json` yourself.
+**Updating the webhook:**
+```
+!webhook <project>     # (optionally attach a new avatar image)
+```
+Re-creates the webhook in the project channel. Safe to run multiple times.
+
+**Webhook priority:** Dynamic URL from `data/webhooks.json` (set by `!webhook`/`!addproject`)
+takes precedence over `webhook_url` in the project YAML. The YAML `webhook_url` field is a
+static fallback for manual setups.
+
+**Manual setup:** Create a webhook in Discord (channel settings → Integrations → Webhooks),
+then either paste the URL into `projects/<name>.yaml` as `webhook_url`, or into
+`data/webhooks.json` as `{"<name>": "<url>"}`.
+
+**Private repos:** Use SSH URLs (`git@github.com:user/repo.git`) for `!addproject`, not HTTPS.
+HTTPS clones require interactive credentials which aren't available inside the container.
+The `~/.ssh` directory is bind-mounted into the container for this purpose.
 
 ---
 
@@ -299,15 +322,31 @@ Caddy routing is configured manually per project (not automated by Herald).
 ## Adding a New Project
 
 **Via Discord (recommended):**
+
 ```
-!addproject chortle /srv/herald/repos/chortle
+!addproject chortle git@github.com:you/chortle.git Pounce
 ```
-Herald creates the channel, webhook, and YAML. Hot-reloads config. Done.
+
+Herald will, in one command:
+1. Clone the repo to `HERALD_ROOT/repos/chortle/`
+2. Create a private `#pounce` channel visible only to the operator and Herald
+3. Create an agent webhook for Pounce (attach an image to the `!addproject` message to set the avatar)
+4. Write `projects/chortle.yaml`
+5. Hot-reload — `!run chortle <task>` works immediately, no restart needed
+
+To use an existing channel instead of creating a new one:
+```
+!addproject chortle git@github.com:you/chortle.git Pounce #existing-channel
+```
+
+**SSH URLs for private repos:** Use `git@github.com:user/repo.git`, not `https://`. HTTPS clones
+require interactive credentials unavailable inside the container. Public repos can use HTTPS.
 
 **Via YAML (manual):**
-1. Copy `projects/example.yaml` → `projects/chortle.yaml`
-2. Fill in `name`, `display_name`, `path`, `discord_channel_id`
-3. Run `!reload` in Discord (or restart Herald)
+1. Clone the repo manually to `HERALD_ROOT/repos/chortle/`
+2. Copy `projects/example.yaml` → `projects/chortle.yaml`
+3. Fill in `name`, `display_name`, `path`, `discord_channel_id`, `agent_name`
+4. Restart Herald (hot-reload not available for manual YAML drops)
 
 ---
 

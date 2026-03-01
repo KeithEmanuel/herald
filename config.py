@@ -56,7 +56,7 @@ class ProjectConfig(BaseModel):
     # Short identifier used in Discord commands: `!run enchiridion <task>`
     name: str
 
-    # Human-readable name shown in Discord messages
+    # Human-readable name shown in Herald messages and status outputs
     display_name: str
 
     # Absolute path to the project repo on the host (bind-mounted into Herald container)
@@ -64,6 +64,19 @@ class ProjectConfig(BaseModel):
 
     # Discord channel ID where Herald posts results for this project
     discord_channel_id: str
+
+    # Optional: name the agent uses when posting via webhook (e.g. "Argent").
+    # Falls back to display_name if not set.
+    agent_name: str | None = None
+
+    # Optional: webhook URL for posting agent results with a custom identity.
+    # Create in Discord: channel settings → Integrations → Webhooks → New Webhook.
+    # Without this, results are posted by the Herald bot account.
+    webhook_url: str | None = None
+
+    # Optional: URL to an image to use as the agent's avatar in webhook posts.
+    # If not set, uses the webhook's default avatar (configured in Discord).
+    webhook_avatar_url: str | None = None
 
     git: GitConfig = GitConfig()
     deploy: DeployConfig = DeployConfig()

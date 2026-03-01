@@ -140,11 +140,23 @@ class HeraldScheduler:
         channel_id_int = int(channel_id)
 
         async def on_complete(output: str) -> None:
-            from agent_runner import truncate_for_discord
+            from agent_runner import is_usage_limit_error, truncate_for_discord
+
+            # If the API refused due to usage/rate limits, skip quietly rather than
+            # posting a scary error to the project channel. The agent will retry on
+            # the next scheduled run. Log a warning so it's visible in Herald's logs.
+            if is_usage_limit_error(output):
+                log.warning(
+                    "Scheduled task for '%s' skipped — API usage/rate limit reached. "
+                    "Will retry at next scheduled run.",
+                    project_name,
+                )
+                return
+
             body = truncate_for_discord(output)
             await self._post_fn(
                 channel_id_int,
-                f"**Scheduled task complete** `[{project_name}]`\n```\n{body}\n```",
+                f"**Scheduled task** `[{project_name}]`\n```\n{body}\n```",
             )
 
         self._queue.enqueue(AgentTask(

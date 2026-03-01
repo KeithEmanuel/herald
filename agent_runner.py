@@ -84,3 +84,27 @@ def truncate_for_discord(text: str, max_chars: int = DISCORD_MAX_CHARS) -> str:
         return text
     cutoff = max_chars - 50
     return text[:cutoff] + f"\n\n… [truncated — {len(text) - cutoff} chars omitted]"
+
+
+# Patterns that indicate the Anthropic API refused the request due to usage/rate limits.
+# The claude CLI embeds these in stderr or stdout when it can't start a run.
+_USAGE_LIMIT_PATTERNS = (
+    "rate limit",
+    "rate_limit",
+    "usage limit",
+    "credit balance",
+    "quota exceeded",
+    "overloaded_error",
+    "too many requests",
+)
+
+
+def is_usage_limit_error(output: str) -> bool:
+    """
+    Return True if the agent output looks like a usage/rate limit refusal.
+
+    Used by callers to decide whether to post an error message or skip quietly.
+    Scheduled tasks skip silently on limit errors; interactive runs still report them.
+    """
+    lowered = output.lower()
+    return any(pattern in lowered for pattern in _USAGE_LIMIT_PATTERNS)

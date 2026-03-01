@@ -155,11 +155,28 @@ command + Herald managing itself (`projects/herald.yaml`). Priority before first
   - `CLAUDE.md` (Herald's) — naming freedom note in Soul Creation; new "Codebase Ownership"
     section for Argent specifically; naming convention updated in MEMORY.md
 
-**Deployment blockers (Keith's server):**
-- Changes from this session not yet pushed to GitHub (need `git push` on laptop)
-- Server needs to `git pull` in repos/herald/ then restart
-- Keith's Caddy is Docker-based; for now use sidecar pattern or migrate to Podman separately
-- Pre-deployment: `HERALD_ROOT=/mnt/lvm-nvme/herald`, `HERALD_DOCKER_SOCKET` for Podman if used
+**Changes this session (2026-02-28, fourth+fifth sessions):**
+- Fixed discord.py 2.x command registration: moved all commands to `HeraldCommands(commands.Cog)`
+  registered via `await self.add_cog()` in `setup_hook`. Bot subclass methods aren't auto-discovered.
+- Fixed `self.loop.create_task()` deprecation → `asyncio.get_event_loop().create_task()`
+- Added per-agent Discord identity: `agent_name`, `webhook_url`, `webhook_avatar_url` on ProjectConfig;
+  `_post_as_agent()` uses dynamic webhook URL from `data/webhooks.json` with fallback to config
+- Added `!webhook <project>` command: creates webhook in project channel, avatar from attachment
+- Added `!addproject <name> <repo_url> [agent_name] [#channel]` command: clones repo → creates
+  private channel → creates webhook → writes YAML → hot-reloads into self.projects
+- Fixed `repos_dir` path bug: `HERALD_ROOT` now passed as container env var
+- Phase 1.5 completed:
+  - `!reload`: hot-reload all YAMLs + restart scheduler (no Herald restart)
+  - `!schedule <project> <cron>`: update cron from Discord, writes YAML, reloads scheduler
+  - `!run` output now goes to project channel, not the command channel
+  - Conversational project channels: plain messages trigger agent runs with history context
+  - Soul creation: missing SOUL.md → bootstrap run queued automatically at startup
+  - Usage limit handling: scheduled tasks skip silently; interactive runs still surface errors
+  - Default 8am daily schedule in every `!addproject` YAML
+
+**Deployment (Keith's server):**
+- All changes on laptop, not yet pushed. Push laptop → pull server → rebuild.
+- Private repos: use SSH URLs with `!addproject` (HTTPS needs TTY for auth, not available in container)
 
 ---
 

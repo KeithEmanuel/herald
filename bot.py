@@ -5,12 +5,17 @@ Receives commands from the operator, routes tasks to the queue, posts results to
 channels, and handles the git push-approval flow (👍 / 👎 reactions).
 
 Commands:
-  !run <project> <task>   — trigger a one-off agent run
+  !run <project> <task>   — trigger a one-off agent run (posts result to project channel)
   !deploy <project>       — build and deploy the project's Docker container
   !status                 — show queue depth and currently running job
   !projects               — list registered projects
   !webhook <project>      — create/update the agent webhook (attach an image to set avatar)
   !addproject <name> <repo_url> [agent_name] [#channel]  — register a new project end-to-end
+
+Direct messages:
+  Posting a plain message in a project's Discord channel automatically queues a task
+  for that project's agent. Results are posted back in the same channel via the agent
+  webhook (i.e. as the agent's own identity). No !run needed.
 
 Git approval flow:
   After each agent run, Herald checks for unpushed agent/* branches.
@@ -63,7 +68,7 @@ class HeraldCommands(commands.Cog, name="Herald"):
         !run <project> <task>
 
         Trigger a one-off agent run. The agent runs asynchronously — Herald posts the
-        result when it's done, which could be several minutes later.
+        result to the project's channel when done (not the channel where !run was typed).
         """
         if project not in self.bot.projects:
             await ctx.send(
@@ -71,18 +76,28 @@ class HeraldCommands(commands.Cog, name="Herald"):
             )
             return
 
-        # Acknowledge immediately — the user shouldn't wonder if it worked
-        await ctx.send(f"Queued task for `{project}` (position {self.bot.task_queue.depth + 1}). I'll reply here when done.")
+        # Results go to the project's dedicated channel, not wherever !run was typed.
+        # This keeps the herald channel clean and agent output in the right place.
+        project_channel = self.bot.get_channel(
+            int(self.bot.projects[project].discord_channel_id)
+        ) or ctx.channel
+
+        # Acknowledge immediately in the command channel
+        dest = project_channel.mention if project_channel != ctx.channel else "here"
+        await ctx.send(
+            f"Queued task for `{project}` (position {self.bot.task_queue.depth + 1}). "
+            f"I'll post results in {dest}."
+        )
 
         async def on_complete(output: str) -> None:
             body = truncate_for_discord(output)
             await self.bot._post_as_agent(
                 project,
-                f"**Agent run complete** `[{project}]`\n```\n{body}\n```",
-                ctx.channel,
+                f"```\n{body}\n```",
+                project_channel,
             )
             # After each run, check for unpushed agent branches and propose a push if needed
-            await self.bot._check_and_propose_push(project, ctx.channel)
+            await self.bot._check_and_propose_push(project, project_channel)
 
         self.bot.task_queue.enqueue(AgentTask(
             project_name=project,
@@ -214,6 +229,219 @@ class HeraldCommands(commands.Cog, name="Herald"):
         )
         log.info("Webhook created for project '%s' in channel %d", project, channel.id)
 
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message) -> None:
+        """
+        Direct message listener for project channels.
+
+        When the operator posts a plain message in a project's dedicated channel, treat it
+        as a task for that project's agent — no `!run` needed. This gives each project
+        channel a Claude Code-like conversational feel: type your request, get a response.
+
+        Ignores:
+          - Messages from bots (including Herald itself)
+          - Messages starting with '!' (handled by command processing)
+          - Messages in channels that aren't a project channel
+        """
+        if message.author.bot:
+            return
+        if message.content.startswith(self.bot.command_prefix):
+            return
+
+        project_name = self.bot._channel_to_project.get(message.channel.id)
+        if project_name is None:
+            return
+
+        task_text = message.content.strip()
+        if not task_text:
+            return
+
+        channel = message.channel
+
+        # Fetch recent channel history so the agent has conversation context.
+        # This is what lets the agent understand short replies like "yes" or "actually,
+        # make it dark mode instead" — it can see what it said in previous messages.
+        recent: list[discord.Message] = []
+        async for msg in channel.history(limit=15, before=message, oldest_first=False):
+            recent.append(msg)
+        recent.reverse()  # oldest first so it reads like a conversation
+
+        context_lines = []
+        for msg in recent:
+            body = msg.content.strip()
+            if not body:
+                continue  # skip image-only or embed-only messages
+            # Webhook messages are from the agent (Argent); label them by display_name.
+            # Regular messages are from humans; label them by display_name too.
+            context_lines.append(f"{msg.author.display_name}: {body}")
+
+        if context_lines:
+            context_block = "\n".join(context_lines)
+            full_task = (
+                f"[Recent conversation in #{channel.name}:]\n"
+                f"{context_block}\n\n"
+                f"[New message from {message.author.display_name}:]\n"
+                f"{task_text}"
+            )
+        else:
+            full_task = task_text
+
+        # Ack from the bot (not the webhook) so it's clearly Herald confirming receipt,
+        # not the agent pretending to instantly know the answer.
+        await channel.send(
+            f"On it — I'll reply here when done "
+            f"(queue position {self.bot.task_queue.depth + 1})."
+        )
+
+        async def on_complete(output: str) -> None:
+            body = truncate_for_discord(output)
+            await self.bot._post_as_agent(project_name, f"```\n{body}\n```", channel)
+            await self.bot._check_and_propose_push(project_name, channel)
+
+        self.bot.task_queue.enqueue(AgentTask(
+            project_name=project_name,
+            task=full_task,
+            on_complete=on_complete,
+        ))
+
+    @commands.command(name="reload")
+    async def cmd_reload(self, ctx: commands.Context) -> None:
+        """
+        !reload
+
+        Hot-reload all project configs from the projects/ directory without restarting Herald.
+        Use this after manually editing a project YAML or adding a new one by hand.
+
+        Projects added via !addproject are already live and don't need a reload.
+        """
+        try:
+            new_projects = load_projects(self.bot.projects_dir)
+        except Exception as e:
+            await ctx.send(f"Reload failed — config error:\n```\n{e}\n```")
+            return
+
+        old_names = set(self.bot.projects.keys())
+        new_names = set(new_projects.keys())
+        added = new_names - old_names
+        removed = old_names - new_names
+
+        # Swap in new project config in-place (queue worker holds a ref to this dict,
+        # so we update it rather than replacing it to keep the reference valid)
+        self.bot.projects.clear()
+        self.bot.projects.update(new_projects)
+
+        # Rebuild the channel → project lookup map
+        self.bot._channel_to_project = {
+            int(p.discord_channel_id): name for name, p in self.bot.projects.items()
+        }
+
+        # Restart the scheduler so new/updated cron schedules take effect
+        self.bot._scheduler.shutdown()
+        self.bot._scheduler = HeraldScheduler(
+            queue=self.bot.task_queue,
+            projects=self.bot.projects,
+            post_fn=self.bot._post_to_channel,
+        )
+        self.bot._scheduler.start()
+
+        lines = [f"Reloaded — {len(new_projects)} project(s) active."]
+        if added:
+            lines.append(f"Added: {', '.join(f'`{n}`' for n in sorted(added))}")
+        if removed:
+            lines.append(f"Removed: {', '.join(f'`{n}`' for n in sorted(removed))}")
+        if not added and not removed:
+            lines.append("Schedules refreshed — no projects added or removed.")
+
+        await ctx.send("\n".join(lines))
+        log.info("Config hot-reloaded — projects now: %s", list(self.bot.projects.keys()))
+
+    @commands.command(name="schedule")
+    async def cmd_schedule(self, ctx: commands.Context, project: str, *, cron: str) -> None:
+        """
+        !schedule <project> <cron>
+
+        Set or update the daily cron schedule for a project.
+
+        <cron> is a 5-field cron expression: minute hour dom month dow
+        Examples:
+          !schedule herald 0 8 * * *     → 8:00am every day
+          !schedule herald 30 9 * * 1    → 9:30am every Monday
+
+        This replaces the project's first scheduled task's cron time (task content unchanged).
+        If the project has no scheduled tasks, adds the default morning check-in task.
+
+        Writes the updated YAML and hot-reloads the scheduler — no restart needed.
+        """
+        if project not in self.bot.projects:
+            await ctx.send(
+                f"Unknown project `{project}`. Try `!projects` to see registered projects."
+            )
+            return
+
+        cron = cron.strip()
+
+        # Validate cron expression by trying to build a trigger from it
+        try:
+            self.bot._scheduler._build_trigger(cron, stagger_minutes=0)
+        except (ValueError, Exception) as e:
+            await ctx.send(
+                f"Invalid cron expression `{cron}`: {e}\n"
+                f"Format: `minute hour dom month dow` (e.g. `0 8 * * *` for 8am daily)"
+            )
+            return
+
+        project_config = self.bot.projects[project]
+        yaml_path = self.bot.projects_dir / f"{project}.yaml"
+
+        # Load raw YAML to preserve comments and structure, then update schedule
+        try:
+            import yaml as _yaml
+            raw = _yaml.safe_load(yaml_path.read_text()) if yaml_path.exists() else {}
+        except Exception:
+            raw = {}
+
+        # Default task content used when a project has no existing schedule
+        default_task = (
+            "Read SOUL.md and MEMORY.md. Check the recent git log (last 5 commits). "
+            "What is the current state of the project? What is the single most "
+            "important thing to work on next? Post a short status — 2-3 sentences "
+            "— and end with a specific proposal: what you'd do if given the go-ahead. "
+            "Keep it conversational. Wait for a reply before acting."
+        )
+
+        existing_schedule = raw.get("schedule", [])
+        if existing_schedule:
+            # Update the cron on the first task, preserve its task content
+            existing_schedule[0]["cron"] = cron
+        else:
+            existing_schedule = [{"cron": cron, "task": default_task}]
+
+        raw["schedule"] = existing_schedule
+
+        # Write updated YAML and hot-reload the scheduler
+        yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+
+        new_projects = load_projects(self.bot.projects_dir)
+        self.bot.projects.clear()
+        self.bot.projects.update(new_projects)
+        self.bot._channel_to_project = {
+            int(p.discord_channel_id): name for name, p in self.bot.projects.items()
+        }
+        self.bot._scheduler.shutdown()
+        self.bot._scheduler = HeraldScheduler(
+            queue=self.bot.task_queue,
+            projects=self.bot.projects,
+            post_fn=self.bot._post_to_channel,
+        )
+        self.bot._scheduler.start()
+
+        action = "added" if not existing_schedule else "updated"
+        await ctx.send(
+            f"Schedule {action} for `{project}` — cron: `{cron}`.\n"
+            f"Scheduler reloaded. New schedule is active immediately."
+        )
+        log.info("Schedule %s for project '%s': cron=%s", action, project, cron)
+
     @commands.command(name="addproject")
     async def cmd_addproject(
         self,
@@ -318,6 +546,21 @@ class HeraldCommands(commands.Cog, name="Herald"):
             await ctx.send(f"Webhook: failed ({e}) — run `!webhook {name}` later to set it up")
 
         # --- Step 4: Write project YAML ---
+        # Default daily task: a morning check-in that ends with a proposal the operator
+        # can reply to directly in the channel (conversational flow via on_message).
+        default_schedule = [
+            {
+                "cron": "0 8 * * *",
+                "task": (
+                    "Read SOUL.md and MEMORY.md. Check the recent git log (last 5 commits). "
+                    "What is the current state of the project? What is the single most "
+                    "important thing to work on next? Post a short status — 2-3 sentences "
+                    "— and end with a specific proposal: what you'd do if given the go-ahead. "
+                    "Keep it conversational. Wait for a reply before acting."
+                ),
+            }
+        ]
+
         yaml_data = {
             "name": name,
             "display_name": display_name,
@@ -328,6 +571,7 @@ class HeraldCommands(commands.Cog, name="Herald"):
                 "push_requires_approval": True,
                 "branch_prefix": f"agent/{name}",
             },
+            "schedule": default_schedule,
         }
         yaml_path = self.bot.projects_dir / f"{name}.yaml"
         yaml_path.write_text(yaml.dump(yaml_data, default_flow_style=False, sort_keys=False))
@@ -335,11 +579,14 @@ class HeraldCommands(commands.Cog, name="Herald"):
 
         # --- Step 5: Hot-reload into active projects (no restart needed) ---
         self.bot.projects[name] = ProjectConfig(**yaml_data)
+        # Keep the channel → project map in sync so on_message picks up the new channel
+        self.bot._channel_to_project[channel.id] = name
         log.info("Project '%s' added via !addproject, active immediately", name)
 
         await ctx.send(
-            f"**`{name}` is ready.** Try `!run {name} <task>` to start.\n"
-            f"Scheduled tasks (if added to the YAML later) activate on next Herald restart."
+            f"**`{name}` is ready.** Daily morning check-in scheduled at 8am.\n"
+            f"Talk to the agent by posting in {channel.mention}, or use `!run {name} <task>`.\n"
+            f"To change the schedule: `!schedule {name} <cron>` or edit the YAML and `!reload`."
         )
 
 
@@ -370,6 +617,13 @@ class HeraldBot(commands.Bot):
         # falling back to the projects/ parent directory as a best-guess default.
         self.projects_dir = projects_dir
         self.repos_dir = (herald_root if herald_root else projects_dir.parent) / "repos"
+
+        # Inverted map: channel_id (int) → project_name.
+        # Used by the on_message listener to route messages from project channels to
+        # their agent without a linear scan through all projects on every message.
+        self._channel_to_project: dict[int, str] = {
+            int(p.discord_channel_id): name for name, p in self.projects.items()
+        }
 
         # If set, only this Discord user ID can approve/discard push proposals.
         # Sourced from HERALD_OPERATOR_ID env var. None = any server member (not recommended).
@@ -447,10 +701,10 @@ class HeraldBot(commands.Bot):
     async def _check_project_souls(self) -> None:
         """
         On startup, check each project for a SOUL.md file.
-        If a project is missing one, post a notice to its Discord channel.
 
-        A SOUL.md gives the project agent a persistent identity and cross-session memory.
-        Without one, the agent starts each run with no context about itself or the project.
+        If a project is missing one, post a notice to its Discord channel and enqueue a
+        bootstrapping agent run to write one automatically. A project without a soul starts
+        each run with no identity or memory — the bootstrap makes it a real agent immediately.
         """
         from pathlib import Path
 
@@ -461,11 +715,47 @@ class HeraldBot(commands.Bot):
                 if channel:
                     await channel.send(
                         f"👻 **`{name}` has no SOUL.md.** "
-                        f"The agent will run without persistent identity or memory.\n"
-                        f"Use `!run {name} <task>` to create one, or add SOUL.md manually. "
-                        f"See `projects/example.yaml` for a suggested task prompt."
+                        f"Bootstrapping agent soul — I'll introduce myself when ready."
                     )
-                    log.warning("Project '%s' is missing SOUL.md at %s", name, project.path)
+                log.warning(
+                    "Project '%s' missing SOUL.md — queuing bootstrap run", name
+                )
+
+                bootstrap_task = (
+                    "You are a new agent on this project. This is your first run. "
+                    "Do the following:\n"
+                    "1. Read CLAUDE.md if it exists.\n"
+                    "2. Look in the humans/ directory for any operator profiles — "
+                    "they tell you how this person works and what they care about.\n"
+                    "3. Briefly explore the codebase (README, main source files, "
+                    "package files, any existing docs).\n"
+                    "4. Write SOUL.md. Choose a name that fits this project and what "
+                    "you've learned about the people here. Write your role, your values, "
+                    "and a personality that reflects how you'll actually work here. "
+                    "Heraldic tincture names (Argent, Or, Sable...) are one option — "
+                    "pick whatever fits.\n"
+                    "5. Write initial MEMORY.md with Core Memories based on what you "
+                    "learned about the architecture and key decisions.\n"
+                    "6. Post a short introduction: your name, your read on the project, "
+                    "and what you're here to do. 2-3 sentences. No fluff."
+                )
+
+                # Capture loop variable so the closure captures the right values
+                def make_on_complete(proj_name: str, proj_channel):
+                    async def on_complete(output: str) -> None:
+                        body = truncate_for_discord(output)
+                        await self._post_as_agent(
+                            proj_name, f"```\n{body}\n```", proj_channel
+                        )
+                    return on_complete
+
+                self.task_queue.enqueue(AgentTask(
+                    project_name=name,
+                    task=bootstrap_task,
+                    on_complete=make_on_complete(name, channel),
+                    label=f"[soul bootstrap] {name}",
+                    record_activity=False,
+                ))
 
     # -------------------------------------------------------------------------
     # Git push-approval flow
