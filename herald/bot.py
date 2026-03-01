@@ -173,10 +173,19 @@ class HeraldCommands(commands.Cog, name="Herald"):
             )
             return
 
-        await ctx.send(
-            f"Deploy queued for `{project}` (position {self.bot.task_queue.depth + 1}). "
-            f"I'll post output when done."
-        )
+        # Detect self-deployment: Herald can't send a completion message after
+        # restarting itself, so we send a special ack that sets expectations.
+        is_self = project == "herald"
+        if is_self:
+            await ctx.send(
+                f"Deploying Herald (position {self.bot.task_queue.depth + 1}) — "
+                f"I'll go quiet while I restart. Back in ~30 seconds."
+            )
+        else:
+            await ctx.send(
+                f"Deploy queued for `{project}` (position {self.bot.task_queue.depth + 1}). "
+                f"I'll post output when done."
+            )
         await self.bot._enqueue_deploy(project, ctx.channel)
 
     @commands.command(name="webhook")
@@ -293,16 +302,29 @@ class HeraldCommands(commands.Cog, name="Herald"):
         else:
             full_task = task_text
 
-        # Ack from the bot (not the webhook) so it's clearly Herald confirming receipt,
-        # not the agent pretending to instantly know the answer.
-        await channel.send(
-            f"On it — I'll reply here when done "
-            f"(queue position {self.bot.task_queue.depth + 1})."
+        # Post a "thinking" placeholder as the agent identity. We capture the returned
+        # message so on_complete can edit it in-place — the placeholder transforms into
+        # the actual response rather than posting a separate follow-up message.
+        queue_pos = self.bot.task_queue.depth + 1
+        thinking_msg = await self.bot._post_as_agent(
+            project_name,
+            f"_Working on it..._ (queue position {queue_pos})",
+            channel,
         )
 
         async def on_complete(output: str) -> None:
             body = truncate_for_discord(output)
-            await self.bot._post_as_agent(project_name, f"```\n{body}\n```", channel)
+            response = f"```\n{body}\n```"
+            if thinking_msg is not None:
+                try:
+                    await thinking_msg.edit(content=response)
+                    await self.bot._check_and_propose_push(project_name, channel)
+                    return
+                except Exception:
+                    log.warning(
+                        "Could not edit thinking message for %s — posting fresh", project_name
+                    )
+            await self.bot._post_as_agent(project_name, response, channel)
             await self.bot._check_and_propose_push(project_name, channel)
 
         proj_cfg = self.bot.projects[project_name]
@@ -1066,14 +1088,16 @@ class HeraldBot(commands.Bot):
 
     async def _post_as_agent(
         self, project_name: str, content: str, channel: discord.TextChannel
-    ) -> None:
+    ) -> discord.Message | discord.WebhookMessage | None:
         """
-        Post a message as the project's agent identity.
+        Post a message as the project's agent identity. Returns the posted message.
 
         If the project has a webhook_url configured, posts via that webhook using
-        agent_name (or display_name) and optionally webhook_avatar_url. This makes
-        agent output appear as a distinct Discord identity (e.g. "Argent") rather
-        than the Herald bot account.
+        agent_name (or display_name). This makes agent output appear as a distinct
+        Discord identity (e.g. "Argent") rather than the Herald bot account.
+
+        Always returns the posted message object — callers can edit it later to
+        replace a "thinking..." placeholder with the actual response in-place.
 
         Falls back to channel.send if no webhook is configured or if the webhook fails.
         """
@@ -1084,14 +1108,13 @@ class HeraldBot(commands.Bot):
             try:
                 webhook = discord.Webhook.from_url(webhook_url, client=self)
                 username = project.agent_name or project.display_name
-                # No avatar_url here — the webhook already has the avatar set on creation
-                await webhook.send(content, username=username)
-                return
+                # wait=True returns the WebhookMessage so callers can edit it later
+                return await webhook.send(content, username=username, wait=True)
             except Exception:
                 log.exception(
                     "Webhook post failed for %s, falling back to bot post", project_name
                 )
-        await channel.send(content)
+        return await channel.send(content)
 
     async def _enqueue_deploy(self, project_name: str, channel: discord.TextChannel) -> None:
         """
