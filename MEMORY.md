@@ -36,17 +36,31 @@ Heraldic names are one option among many.
 **Tech stack:** Python 3.12 + discord.py + APScheduler (AsyncIOScheduler) + pydantic +
 pyyaml + python-dotenv. No web server — long-running asyncio process.
 
-**Architecture modules:**
+**Package structure:** All Python source lives in `herald/` package (proper Python package
+for distribution). Entry point: `python -m herald` or `herald` console script. All imports
+are relative within the package (`from .activity import ...`). Root `.py` files are gone.
+
+**Architecture modules** (all under `herald/`):
 - `bot.py` — Discord bot, commands, routing, push-approval reactions, deploy commands,
   webhook posting for per-agent Discord identity
-- `task_queue.py` — Serial FIFO queue; `AgentTask` supports optional `run_fn` override and
-  `record_activity` flag so non-agent tasks (deploys) can use the same queue safely
-- `scheduler.py` — Cron jobs per project, staggered +15min by project index
-- `agent_runner.py` — Wraps `claude -p "<task>" --print` in project dir
+- `task_queue.py` — Serial FIFO queue; `AgentTask` supports optional `run_fn` override,
+  `record_activity` flag, `duration_seconds`, `tokens_used`, `model`, `max_turns`
+  (set by worker after run). Worker handles both `str` and `tuple[str, int]` returns.
+- `scheduler.py` — Cron jobs per project, staggered +15min by project index; also registers
+  daily autonomy-check jobs for projects with `autonomous.enabled = true`
+- `agent_runner.py` — Wraps `claude -p "<task>" --print --dangerously-skip-permissions
+  --output-format json [--model] [--max-turns]` in project dir; returns `tuple[str, int]`
+  (text, total_tokens). `_parse_json_output()` extracts text from Claude Code's JSON stream.
 - `deploy.py` — `deploy_project(compose_path)` — runs `docker compose up --build -d`
 - `git_ops.py` — `get_unpushed_agent_branches()`, `push_branch()`, `delete_branch()`
-- `config.py` — Pydantic models for projects/*.yaml; includes `DeployConfig`
+- `config.py` — Pydantic models for projects/*.yaml; includes `DeployConfig`, `AutonomousConfig`
 - `activity.py` — `record_activity()`, `days_since_activity()`, `accountability_message()`
+  — respects `HERALD_DATA_DIR` env var (defaults to `data/`)
+- `autonomy.py` — Pre-flight checklist, weekly budget tracking, roadmap detection;
+  `data/autonomy.json` persists autonomous run stats (ISO-week auto-reset). Tracks both
+  `autonomous_minutes` (wall-clock) and `autonomous_tokens` (API tokens). Budget mode:
+  `weekly_tokens > 0` uses token count, else `weekly_minutes`. `record_run()` accepts
+  optional `tokens` kwarg. Respects `HERALD_DATA_DIR` env var.
 
 **Git approval flow:** Agents commit locally to `agent/<project>-YYYYMMDD-HHMMSS`.
 Herald detects unpushed branches → posts Discord proposal → 👍 push / 👎 discard.
@@ -124,10 +138,9 @@ projects: SOUL.md, MEMORY.md, CLAUDE.md. `blog/` — agent-written posts for Git
 
 *Current sprint context. Roll up to long-term after ~2 weeks or phase end.*
 
-**Status (2026-02-28):** Core built and functional. Repo restructured to HERALD_ROOT layout
-(repos/herald/ for source, deployments/, caddy/ sidecar option). Podman rootless added as
-recommended runtime. Security threat model documented. Repo pushed to keithemanuel/herald
-(private). First deployment in progress on Keith's server at /mnt/lvm-nvme/herald/.
+**Status (2026-03-01):** Core built and functional. Autonomous development mode implemented
+and tested (54/54 tests passing). Repo is at /mnt/lvm-nvme/herald/repos/herald/ — all
+changes on server, not yet committed or pushed.
 
 **Changes this session (2026-02-28, second session):**
 - HERALD_ROOT consolidation: replaced HERALD_REPOS_ROOT + HERALD_DEPLOYMENTS_DIR with single var
@@ -155,6 +168,41 @@ command + Herald managing itself (`projects/herald.yaml`). Priority before first
   - `CLAUDE.md` (Herald's) — naming freedom note in Soul Creation; new "Codebase Ownership"
     section for Argent specifically; naming convention updated in MEMORY.md
 
+**Changes this session (2026-03-01, first session):**
+- Autonomous development mode: `autonomy.py` (new), `config.py` (`AutonomousConfig`),
+  `scheduler.py` (daily autonomy-check jobs), `bot.py` (`!autonomy` command),
+  `task_queue.py` (`duration_seconds` on `AgentTask`), `projects/example.yaml` (docs),
+  `docs/spec.md` + `docs/roadmap.md` (updated), 21 new tests in `tests/test_autonomy.py`,
+  5 new tests in `tests/test_config.py`, 1 new test in `tests/test_queue.py`
+- Key design: autonomous runs use `record_activity=False` (accountability clock stays honest);
+  budget in wall-clock minutes/week; 7-check pre-flight (all local, no API calls)
+
+**Changes this session (2026-03-01, third session):**
+- `--dangerously-skip-permissions` added to agent_runner (was missing — bug; agents could hang)
+- `--output-format json` added: Claude Code now returns structured JSON with token counts
+- `run_agent()` signature: `(path, task, timeout, model=None, max_turns=None) -> tuple[str, int]`
+- `AgentTask` gains: `tokens_used`, `model`, `max_turns` fields
+- `ProjectConfig` gains: `model: str = ""`, `max_turns: int = 0`
+- `AutonomousConfig` gains: `weekly_tokens: int = 0` (when > 0, token budget replaces minutes)
+- `autonomy.py`: `record_run()` now tracks tokens; pre-flight uses token budget if set
+- `scheduler.py`, `bot.py`: pass model/max_turns through to AgentTask
+- `_autonomy_status` updated: shows token budget when `weekly_tokens > 0`
+- 16 new tests added; 70/70 passing
+- `docs/roadmap.md`: new "Long-Term Possibilities" section (MCP, hooks, skills, ruamel.yaml, etc.)
+
+**Changes this session (2026-03-01, second session):**
+- Full Python package restructure: all source files moved from repo root to `herald/` package
+- All imports updated to relative (`from .activity import ...`); root `.py` files deleted
+- `pyproject.toml` updated: `[project.scripts]` entry, `[tool.pytest.ini_options]`,
+  `[tool.ruff.lint]`, proper `packages.find` with `include = ["herald*"]`
+- `Dockerfile` CMD updated to `python -m herald`
+- `HERALD_DATA_DIR` env var support added to `activity.py`, `autonomy.py`, `bot.py`
+- `tests/conftest.py` simplified (removed `sys.path` hack — package install handles it)
+- All test imports and `patch()` paths updated to `herald.X`
+- `scripts/preflight.py` updated to `from herald.config import load_projects`
+- `humans/keith.md` created (skeleton — Keith to fill in accountability preferences)
+- 54/54 tests passing
+
 **Changes this session (2026-02-28, fourth+fifth sessions):**
 - Fixed discord.py 2.x command registration: moved all commands to `HeraldCommands(commands.Cog)`
   registered via `await self.add_cog()` in `setup_hook`. Bot subclass methods aren't auto-discovered.
@@ -175,8 +223,9 @@ command + Herald managing itself (`projects/herald.yaml`). Priority before first
   - Default 8am daily schedule in every `!addproject` YAML
 
 **Deployment (Keith's server):**
-- All changes on laptop, not yet pushed. Push laptop → pull server → rebuild.
-- Private repos: use SSH URLs with `!addproject` (HTTPS needs TTY for auth, not available in container)
+- Working directly on server at /mnt/lvm-nvme/herald/repos/herald/
+- Changes not yet committed. Private repos: use SSH URLs with `!addproject`.
+- `.venv` needs setup: `sudo apt install -y python3.13-venv && python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"`
 
 ---
 

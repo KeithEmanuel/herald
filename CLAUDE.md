@@ -26,21 +26,27 @@ Herald is designed to be reusable by anyone — not just its original operator. 
 ## Architecture
 
 ```
-herald/
-  __main__.py     # Entry point — loads env, starts bot
-  bot.py          # Discord bot (discord.py) — commands, routing, push-approval reactions
-  agent_runner.py # Wraps `claude -p "<task>" --print` — runs agent in project dir
-  task_queue.py   # Serial asyncio FIFO queue — one agent run at a time globally
-  scheduler.py    # APScheduler — fires cron tasks per project into the queue
-  config.py       # Pydantic config loader — validates projects/*.yaml
-  git_ops.py      # git push/discard for the approval flow
-  SOUL.md         # Argent's persistent identity — maintained by Argent
-  MEMORY.md       # Working context, tiered memory — maintained by Argent
-  projects/       # One YAML per project (private, gitignored; see example.yaml)
-  docs/spec.md    # Full feature spec
-  docs/roadmap.md # Herald-specific roadmap and priorities
-  docs/agent-pattern.md  # Reusable agent design pattern (the template kit)
-  templates/      # Starter kit: SOUL.md, MEMORY.md, CLAUDE.md, humans/
+herald/               # Python package — all source lives here
+  __init__.py         # Package marker; __version__
+  __main__.py         # Entry point — `python -m herald`
+  bot.py              # Discord bot — commands, routing, push-approval reactions
+  agent_runner.py     # Wraps `claude -p "<task>" --print` — runs agent in project dir
+  task_queue.py       # Serial asyncio FIFO queue — one agent run at a time globally
+  scheduler.py        # APScheduler — fires cron tasks per project into the queue
+  config.py           # Pydantic config loader — validates projects/*.yaml
+  git_ops.py          # git push/discard for the approval flow
+  deploy.py           # docker compose up --build -d for project containers
+  activity.py         # Inactivity tracking — reads/writes data/activity.json
+  autonomy.py         # Autonomous dev mode — pre-flight, budget, roadmap detection
+SOUL.md               # Argent's persistent identity — maintained by Argent
+MEMORY.md             # Working context, tiered memory — maintained by Argent
+humans/               # Operator profiles — read during soul bootstrap
+projects/             # One YAML per project (private, gitignored; see example.yaml)
+docs/spec.md          # Full feature spec
+docs/roadmap.md       # Herald-specific roadmap and priorities
+docs/agent-pattern.md # Reusable agent design pattern (the template kit)
+templates/            # Starter kit: SOUL.md, MEMORY.md, CLAUDE.md, humans/
+scripts/preflight.py  # Pre-deployment check — run before `docker compose up`
 ```
 
 **Key invariant:** One agent runs at a time, globally. The queue is serial and unbounded.
@@ -133,7 +139,7 @@ in Herald's own development now.
 
 ## Development Notes
 
-- Python 3.12+. Run `pip install -e ".[dev]"` for dev dependencies.
+- Python 3.12+. Run `pip install -e ".[dev]"` for dev dependencies. Entry point: `python -m herald`.
 - No web server. Herald is a long-running asyncio process.
 - The queue worker runs as a background asyncio task started in `bot.setup_hook()`.
 - APScheduler's `AsyncIOScheduler` shares the bot's event loop — don't use the sync scheduler.

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from config import DeployConfig, GitConfig, ProjectConfig, ScheduleEntry, load_projects
+from herald.config import AutonomousConfig, DeployConfig, GitConfig, ProjectConfig, ScheduleEntry, load_projects
 
 
 # ---------------------------------------------------------------------------
@@ -249,3 +249,125 @@ def test_invalid_yaml_raises(tmp_path):
     bad.write_text(": this is not valid: yaml: [")
     with pytest.raises(Exception):  # yaml.YAMLError or ValidationError
         load_projects(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# AutonomousConfig
+# ---------------------------------------------------------------------------
+
+def test_autonomous_config_defaults():
+    cfg = AutonomousConfig()
+    assert cfg.enabled is False
+    assert cfg.weekly_minutes == 210
+    assert cfg.reserve_minutes == 90
+    assert cfg.min_gap_hours == 20
+    assert cfg.max_per_day == 1
+    assert cfg.roadmap_paths == ["docs/roadmap.md", "ROADMAP.md", "TODO.md"]
+    assert cfg.task == ""
+
+
+def test_autonomous_config_in_project(tmp_path):
+    config = ProjectConfig(
+        name="p",
+        display_name="P",
+        path=str(tmp_path),
+        discord_channel_id="1",
+        autonomous={"enabled": True, "weekly_minutes": 300},
+    )
+    assert config.autonomous.enabled is True
+    assert config.autonomous.weekly_minutes == 300
+    # Unset fields should still have defaults
+    assert config.autonomous.min_gap_hours == 20
+
+
+def test_autonomous_defaults_when_not_in_yaml(tmp_path):
+    """A project with no autonomous block should get all defaults."""
+    config = ProjectConfig(
+        name="p",
+        display_name="P",
+        path=str(tmp_path),
+        discord_channel_id="1",
+    )
+    assert config.autonomous.enabled is False
+    assert config.autonomous.weekly_minutes == 210
+
+
+def test_autonomous_custom_task(tmp_path):
+    config = ProjectConfig(
+        name="p",
+        display_name="P",
+        path=str(tmp_path),
+        discord_channel_id="1",
+        autonomous={"enabled": True, "task": "Do something specific."},
+    )
+    assert config.autonomous.task == "Do something specific."
+
+
+def test_autonomous_custom_roadmap_paths(tmp_path):
+    config = ProjectConfig(
+        name="p",
+        display_name="P",
+        path=str(tmp_path),
+        discord_channel_id="1",
+        autonomous={"roadmap_paths": ["TASKS.md", "docs/roadmap.md"]},
+    )
+    assert config.autonomous.roadmap_paths == ["TASKS.md", "docs/roadmap.md"]
+
+
+def test_autonomous_config_weekly_tokens_default():
+    """weekly_tokens defaults to 0 (disabled — uses weekly_minutes instead)."""
+    cfg = AutonomousConfig()
+    assert cfg.weekly_tokens == 0
+
+
+def test_autonomous_config_weekly_tokens_can_be_set():
+    cfg = AutonomousConfig(weekly_tokens=500_000)
+    assert cfg.weekly_tokens == 500_000
+
+
+# ---------------------------------------------------------------------------
+# ProjectConfig — model and max_turns fields
+# ---------------------------------------------------------------------------
+
+def test_project_config_model_defaults_empty_string(tmp_path):
+    """model defaults to empty string (use Claude Code CLI default)."""
+    config = ProjectConfig(
+        name="p",
+        display_name="P",
+        path=str(tmp_path),
+        discord_channel_id="1",
+    )
+    assert config.model == ""
+
+
+def test_project_config_max_turns_defaults_zero(tmp_path):
+    """max_turns defaults to 0 (no explicit cap)."""
+    config = ProjectConfig(
+        name="p",
+        display_name="P",
+        path=str(tmp_path),
+        discord_channel_id="1",
+    )
+    assert config.max_turns == 0
+
+
+def test_project_config_model_can_be_set(tmp_path):
+    config = ProjectConfig(
+        name="p",
+        display_name="P",
+        path=str(tmp_path),
+        discord_channel_id="1",
+        model="claude-opus-4-5",
+    )
+    assert config.model == "claude-opus-4-5"
+
+
+def test_project_config_max_turns_can_be_set(tmp_path):
+    config = ProjectConfig(
+        name="p",
+        display_name="P",
+        path=str(tmp_path),
+        discord_channel_id="1",
+        max_turns=10,
+    )
+    assert config.max_turns == 10

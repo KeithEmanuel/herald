@@ -16,8 +16,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 if TYPE_CHECKING:
-    from config import ProjectConfig
-    from task_queue import AgentTask, TaskQueue
+    from .config import ProjectConfig
+    from .task_queue import AgentTask, TaskQueue
 
 log = logging.getLogger(__name__)
 
@@ -85,12 +85,33 @@ class HeraldScheduler:
         )
         log.info("Scheduled: accountability check (daily 09:00)")
 
+        # Autonomous development check — daily at 10am per project (staggered).
+        # Only registered for projects with autonomous.enabled = True.
+        for project_index, project in enumerate(self._projects.values()):
+            if not project.autonomous.enabled:
+                continue
+            stagger = project_index * STAGGER_MINUTES
+            trigger = self._build_trigger("0 10 * * *", stagger)
+            job_id = f"{project.name}-autonomy-check"
+            self._scheduler.add_job(
+                self._fire_autonomous_check,
+                trigger=trigger,
+                args=[project.name],
+                id=job_id,
+                misfire_grace_time=300,
+                replace_existing=True,
+            )
+            log.info(
+                "Scheduled: %s (autonomy check, stagger: +%dm)",
+                job_id, stagger,
+            )
+
     async def _check_accountability(self) -> None:
         """
         Daily check: for each project, compute inactivity and post a message if warranted.
         Fires once per day at 9am. Only posts if the project has crossed a threshold.
         """
-        from activity import accountability_message, days_since_activity
+        from .activity import accountability_message, days_since_activity
 
         for project in self._projects.values():
             days = days_since_activity(project.name)
@@ -135,12 +156,13 @@ class HeraldScheduler:
         Enqueues an AgentTask with an on_complete callback that posts to Discord.
         """
         # Import here to avoid circular imports (bot imports scheduler, scheduler uses AgentTask)
-        from task_queue import AgentTask
+        from .task_queue import AgentTask
 
+        project = self._projects.get(project_name)
         channel_id_int = int(channel_id)
 
         async def on_complete(output: str) -> None:
-            from agent_runner import is_usage_limit_error, truncate_for_discord
+            from .agent_runner import is_usage_limit_error, truncate_for_discord
 
             # If the API refused due to usage/rate limits, skip quietly rather than
             # posting a scary error to the project channel. The agent will retry on
@@ -164,8 +186,75 @@ class HeraldScheduler:
             task=task,
             on_complete=on_complete,
             label=f"[scheduled] {task[:50]}",
+            model=project.model or None if project else None,
+            max_turns=project.max_turns or None if project else None,
         ))
         log.info("Scheduled task enqueued for project '%s'", project_name)
+
+    async def _fire_autonomous_check(self, project_name: str) -> None:
+        """
+        Daily autonomous development check for a single project.
+
+        Runs the pre-flight checklist (entirely local — no API calls). If all checks
+        pass, enqueues an agent run to pick and implement one roadmap item.
+
+        Autonomous tasks use record_activity=False so they don't reset the
+        accountability clock — that clock measures operator engagement, not agent work.
+        """
+        from .autonomy import DEFAULT_TASK, record_run, should_run_autonomous
+        from .task_queue import AgentTask
+
+        project = self._projects.get(project_name)
+        if project is None:
+            return
+
+        ok, reason = should_run_autonomous(project)
+        if not ok:
+            log.info("Autonomy check skipped for '%s': %s", project_name, reason)
+            return
+
+        task_prompt = project.autonomous.task or DEFAULT_TASK
+        channel_id_int = int(project.discord_channel_id)
+
+        # Capture agent_task in the closure via a mutable container so we can
+        # read duration_seconds after the worker sets it (closures are late-binding).
+        _task_ref: list["AgentTask"] = []
+
+        async def on_complete(output: str) -> None:
+            from .agent_runner import is_usage_limit_error, truncate_for_discord
+
+            if is_usage_limit_error(output):
+                log.warning(
+                    "Autonomous run for '%s' hit usage/rate limit — skipping record.",
+                    project_name,
+                )
+                return
+
+            # Record wall-clock duration and token count now that the task has completed.
+            # tokens_used is set by the worker from the run_agent return tuple.
+            task_obj = _task_ref[0] if _task_ref else None
+            duration = task_obj.duration_seconds if task_obj else 0.0
+            tokens = task_obj.tokens_used if task_obj else 0
+            record_run(project_name, duration or 0.0, tokens=tokens or 0)
+
+            body = truncate_for_discord(output)
+            await self._post_fn(
+                channel_id_int,
+                f"**Autonomous run** `[{project_name}]`\n```\n{body}\n```",
+            )
+
+        agent_task = AgentTask(
+            project_name=project_name,
+            task=task_prompt,
+            on_complete=on_complete,
+            label=f"[autonomous] {task_prompt[:50]}…",
+            record_activity=False,  # must not reset the accountability clock
+            model=project.model or None,
+            max_turns=project.max_turns or None,
+        )
+        _task_ref.append(agent_task)
+        self._queue.enqueue(agent_task)
+        log.info("Autonomous run enqueued for project '%s'", project_name)
 
     def start(self) -> None:
         self._scheduler.start()

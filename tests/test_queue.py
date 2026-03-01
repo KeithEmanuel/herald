@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from task_queue import AgentTask, TaskQueue
+from herald.task_queue import AgentTask, TaskQueue
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +138,7 @@ async def test_record_activity_false_does_not_record():
     task = make_task("p", run_fn=run_fn, record_activity=False)
     queue.enqueue(task)
 
-    with patch("activity.record_activity") as mock_record:
+    with patch("herald.activity.record_activity") as mock_record:
         await run_queue(queue, projects, run_fn)
         mock_record.assert_not_called()
 
@@ -153,7 +153,7 @@ async def test_record_activity_true_does_record():
     task = make_task("p", run_fn=run_fn, record_activity=True)
     queue.enqueue(task)
 
-    with patch("activity.record_activity") as mock_record:
+    with patch("herald.activity.record_activity") as mock_record:
         await run_queue(queue, projects, run_fn)
         mock_record.assert_called_once_with("p")
 
@@ -223,3 +223,97 @@ async def test_label_defaults_to_truncated_task():
     t2 = AgentTask(project_name="p", task=long_task_text, on_complete=AsyncMock())
     assert len(t2.label) <= 63  # 60 chars + "…"
     assert t2.label.endswith("…")
+
+
+@pytest.mark.asyncio
+async def test_duration_seconds_set_after_run():
+    """Worker must set task.duration_seconds to a positive float after the run."""
+    queue = TaskQueue()
+    projects = {"p": make_project("p")}
+
+    async def slow_run_fn(path, task):
+        await asyncio.sleep(0.01)  # small delay so duration > 0
+        return "done"
+
+    on_complete = AsyncMock()
+    task = make_task("p", run_fn=slow_run_fn, on_complete=on_complete)
+
+    # duration_seconds starts as None
+    assert task.duration_seconds is None
+
+    queue.enqueue(task)
+    await run_queue(queue, projects, slow_run_fn)
+
+    # Worker must have set it to a positive float
+    assert task.duration_seconds is not None
+    assert isinstance(task.duration_seconds, float)
+    assert task.duration_seconds > 0
+
+
+@pytest.mark.asyncio
+async def test_agent_task_new_fields_have_correct_defaults():
+    """tokens_used, model, and max_turns must default to None."""
+    task = AgentTask(project_name="p", task="do stuff", on_complete=AsyncMock())
+    assert task.tokens_used is None
+    assert task.model is None
+    assert task.max_turns is None
+
+
+@pytest.mark.asyncio
+async def test_worker_sets_tokens_used_when_default_run_fn_returns_tuple():
+    """When the default run_fn returns tuple[str, int], worker sets task.tokens_used."""
+    queue = TaskQueue()
+    projects = {"p": make_project("p")}
+
+    # Simulate run_agent returning (text, tokens)
+    default_run_fn = AsyncMock(return_value=("agent output", 12345))
+
+    on_complete = AsyncMock()
+    task = AgentTask(project_name="p", task="do stuff", on_complete=on_complete, run_fn=None)
+
+    assert task.tokens_used is None
+    queue.enqueue(task)
+    await run_queue(queue, projects, default_run_fn)
+
+    # Worker should have set tokens_used from the tuple
+    assert task.tokens_used == 12345
+    # on_complete should receive the text part only (not the tuple)
+    on_complete.assert_awaited_once_with("agent output")
+
+
+@pytest.mark.asyncio
+async def test_worker_tokens_used_none_for_custom_run_fn():
+    """Custom run_fn (deploys etc.) leaves tokens_used as None."""
+    queue = TaskQueue()
+    projects = {"p": make_project("p")}
+
+    custom_run_fn = AsyncMock(return_value="deploy complete")
+    default_run_fn = AsyncMock(return_value=("unused", 0))
+
+    on_complete = AsyncMock()
+    task = make_task("p", run_fn=custom_run_fn, on_complete=on_complete)
+
+    queue.enqueue(task)
+    await run_queue(queue, projects, default_run_fn)
+
+    # Custom run_fn path sets tokens_used to None (no token tracking for non-agent tasks)
+    assert task.tokens_used is None
+    on_complete.assert_awaited_once_with("deploy complete")
+
+
+@pytest.mark.asyncio
+async def test_worker_handles_str_return_from_default_run_fn():
+    """If the default run_fn returns a str (backward compat), tokens_used is 0."""
+    queue = TaskQueue()
+    projects = {"p": make_project("p")}
+
+    default_run_fn = AsyncMock(return_value="plain string output")
+
+    on_complete = AsyncMock()
+    task = AgentTask(project_name="p", task="do stuff", on_complete=on_complete, run_fn=None)
+
+    queue.enqueue(task)
+    await run_queue(queue, projects, default_run_fn)
+
+    assert task.tokens_used == 0
+    on_complete.assert_awaited_once_with("plain string output")

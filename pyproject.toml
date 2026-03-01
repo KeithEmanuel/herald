@@ -6,6 +6,9 @@ build-backend = "setuptools.build_meta"
 name = "herald"
 version = "0.1.0"
 description = "Multi-agent orchestration service — runs Claude Code agents and bridges async communication via Discord"
+license = { text = "MIT" }
+authors = [{ name = "Keith" }]
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     # Discord bot framework — mature, reaction support, 2.x async-native
@@ -26,8 +29,23 @@ dev = [
     "pytest-asyncio>=0.23",
 ]
 
+[project.scripts]
+herald = "herald.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/keithwhor/herald"
+Issues = "https://github.com/keithwhor/herald/issues"
+
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["herald*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]  # line length handled by formatter

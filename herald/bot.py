@@ -5,12 +5,14 @@ Receives commands from the operator, routes tasks to the queue, posts results to
 channels, and handles the git push-approval flow (👍 / 👎 reactions).
 
 Commands:
-  !run <project> <task>   — trigger a one-off agent run (posts result to project channel)
-  !deploy <project>       — build and deploy the project's Docker container
-  !status                 — show queue depth and currently running job
-  !projects               — list registered projects
-  !webhook <project>      — create/update the agent webhook (attach an image to set avatar)
-  !addproject <name> <repo_url> [agent_name] [#channel]  — register a new project end-to-end
+  !run <project> <task>                              — trigger a one-off agent run
+  !deploy <project>                                  — build and deploy project container
+  !status                                            — show queue depth and running job
+  !projects                                          — list registered projects
+  !webhook <project>                                 — create/update agent webhook
+  !schedule <project> <cron>                         — set cron schedule
+  !autonomy <project> <on|off|status|budget|reserve> — manage autonomous dev mode
+  !addproject <name> <repo_url> [agent_name] [#ch]  — register a new project end-to-end
 
 Direct messages:
   Posting a plain message in a project's Discord channel automatically queues a task
@@ -27,7 +29,9 @@ Git approval flow:
 import asyncio
 import json
 import logging
+import os
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -35,12 +39,12 @@ import yaml
 import discord
 from discord.ext import commands
 
-from agent_runner import run_agent, truncate_for_discord
-from config import ProjectConfig, load_projects
-from deploy import deploy_project
-from git_ops import delete_branch, get_unpushed_agent_branches, push_branch
-from scheduler import HeraldScheduler
-from task_queue import AgentTask, TaskQueue
+from .agent_runner import run_agent, truncate_for_discord
+from .config import ProjectConfig, load_projects
+from .deploy import deploy_project
+from .git_ops import delete_branch, get_unpushed_agent_branches, push_branch
+from .scheduler import HeraldScheduler
+from .task_queue import AgentTask, TaskQueue
 
 log = logging.getLogger(__name__)
 
@@ -99,10 +103,13 @@ class HeraldCommands(commands.Cog, name="Herald"):
             # After each run, check for unpushed agent branches and propose a push if needed
             await self.bot._check_and_propose_push(project, project_channel)
 
+        proj_cfg = self.bot.projects[project]
         self.bot.task_queue.enqueue(AgentTask(
             project_name=project,
             task=task,
             on_complete=on_complete,
+            model=proj_cfg.model or None,
+            max_turns=proj_cfg.max_turns or None,
         ))
 
     @commands.command(name="status")
@@ -298,10 +305,13 @@ class HeraldCommands(commands.Cog, name="Herald"):
             await self.bot._post_as_agent(project_name, f"```\n{body}\n```", channel)
             await self.bot._check_and_propose_push(project_name, channel)
 
+        proj_cfg = self.bot.projects[project_name]
         self.bot.task_queue.enqueue(AgentTask(
             project_name=project_name,
             task=full_task,
             on_complete=on_complete,
+            model=proj_cfg.model or None,
+            max_turns=proj_cfg.max_turns or None,
         ))
 
     @commands.command(name="reload")
@@ -441,6 +451,168 @@ class HeraldCommands(commands.Cog, name="Herald"):
             f"Scheduler reloaded. New schedule is active immediately."
         )
         log.info("Schedule %s for project '%s': cron=%s", action, project, cron)
+
+    @commands.command(name="autonomy")
+    async def cmd_autonomy(
+        self, ctx: commands.Context, project: str, action: str, *args: str
+    ) -> None:
+        """
+        !autonomy <project> <action> [value]
+
+        Manage autonomous development mode for a project.
+
+        Actions:
+          on [minutes]      — enable (optionally set weekly_minutes budget)
+          off               — disable
+          status            — show this week's usage stats and pre-flight result
+          budget <minutes>  — update weekly_minutes
+          reserve <minutes> — update reserve_minutes (informational)
+
+        Examples:
+          !autonomy herald on 210
+          !autonomy herald status
+          !autonomy herald budget 300
+          !autonomy herald off
+        """
+        if project not in self.bot.projects:
+            await ctx.send(
+                f"Unknown project `{project}`. Try `!projects` to see registered projects."
+            )
+            return
+
+        action = action.lower().strip()
+
+        if action == "status":
+            await self._autonomy_status(ctx, project)
+            return
+
+        if action not in ("on", "off", "budget", "reserve"):
+            await ctx.send(
+                f"Unknown action `{action}`. "
+                f"Valid actions: `on`, `off`, `status`, `budget`, `reserve`"
+            )
+            return
+
+        # All remaining actions write the YAML — load it first
+        yaml_path = self.bot.projects_dir / f"{project}.yaml"
+        try:
+            raw = yaml.safe_load(yaml_path.read_text()) if yaml_path.exists() else {}
+        except Exception:
+            raw = {}
+
+        raw.setdefault("autonomous", {})
+
+        if action == "on":
+            raw["autonomous"]["enabled"] = True
+            if args:
+                try:
+                    raw["autonomous"]["weekly_minutes"] = int(args[0])
+                except ValueError:
+                    await ctx.send(f"Invalid minutes value: `{args[0]}`")
+                    return
+            msg = f"Autonomous mode **enabled** for `{project}`."
+            if "weekly_minutes" in raw["autonomous"]:
+                msg += f" Budget: {raw['autonomous']['weekly_minutes']}m/week."
+
+        elif action == "off":
+            raw["autonomous"]["enabled"] = False
+            msg = f"Autonomous mode **disabled** for `{project}`."
+
+        elif action == "budget":
+            if not args:
+                await ctx.send("Usage: `!autonomy <project> budget <minutes>`")
+                return
+            try:
+                raw["autonomous"]["weekly_minutes"] = int(args[0])
+            except ValueError:
+                await ctx.send(f"Invalid minutes value: `{args[0]}`")
+                return
+            msg = f"Weekly budget for `{project}` set to **{raw['autonomous']['weekly_minutes']}m**."
+
+        elif action == "reserve":
+            if not args:
+                await ctx.send("Usage: `!autonomy <project> reserve <minutes>`")
+                return
+            try:
+                raw["autonomous"]["reserve_minutes"] = int(args[0])
+            except ValueError:
+                await ctx.send(f"Invalid minutes value: `{args[0]}`")
+                return
+            msg = f"Reserve for `{project}` set to **{raw['autonomous']['reserve_minutes']}m**."
+
+        # Write YAML and hot-reload
+        yaml_path.write_text(yaml.dump(raw, default_flow_style=False, sort_keys=False))
+        new_projects = load_projects(self.bot.projects_dir)
+        self.bot.projects.clear()
+        self.bot.projects.update(new_projects)
+        self.bot._channel_to_project = {
+            int(p.discord_channel_id): name for name, p in self.bot.projects.items()
+        }
+        self.bot._scheduler.shutdown()
+        self.bot._scheduler = HeraldScheduler(
+            queue=self.bot.task_queue,
+            projects=self.bot.projects,
+            post_fn=self.bot._post_to_channel,
+        )
+        self.bot._scheduler.start()
+
+        await ctx.send(msg + " Scheduler reloaded.")
+        log.info("Autonomy %s for project '%s' — args: %s", action, project, args)
+
+    async def _autonomy_status(self, ctx: commands.Context, project: str) -> None:
+        """Post a formatted autonomy status summary for a project."""
+        from .autonomy import get_weekly_stats, has_roadmap_items, should_run_autonomous
+
+        project_config = self.bot.projects[project]
+        cfg = project_config.autonomous
+        stats = get_weekly_stats(project)
+
+        autonomous_minutes = stats.get("autonomous_minutes", 0.0)
+        autonomous_tokens = stats.get("autonomous_tokens", 0)
+        runs_this_week = stats.get("runs_this_week", 0)
+        runs_today = stats.get("runs_today", 0)
+        week_key = stats.get("week_key", "—")
+        last_run_ts = stats.get("last_run_ts")
+
+        last_str = (
+            datetime.fromisoformat(last_run_ts).strftime("%Y-%m-%d %H:%M UTC")
+            if last_run_ts
+            else "never"
+        )
+
+        # Show token budget if configured, otherwise show minute budget
+        if cfg.weekly_tokens > 0:
+            pct = (autonomous_tokens / cfg.weekly_tokens * 100) if cfg.weekly_tokens else 0
+            budget_str = (
+                f"{autonomous_tokens:,} tokens used / {cfg.weekly_tokens:,} ({pct:.0f}%)"
+                f"  •  ({autonomous_minutes:.0f}m wall-clock)"
+            )
+        else:
+            pct = (autonomous_minutes / cfg.weekly_minutes * 100) if cfg.weekly_minutes else 0
+            budget_str = (
+                f"{autonomous_minutes:.0f}m used / {cfg.weekly_minutes}m ({pct:.0f}%)"
+                f"  •  Reserve: {cfg.reserve_minutes}m for operator"
+            )
+
+        roadmap_ok = has_roadmap_items(project_config.path, cfg.roadmap_paths)
+        roadmap_str = "✅ items remaining" if roadmap_ok else "❌ no unchecked items"
+
+        ok, reason = should_run_autonomous(project_config)
+        preflight_str = "✅ ready to run" if ok else f"⏸ {reason}"
+
+        enabled_str = "✅ enabled" if cfg.enabled else "❌ disabled"
+        model_str = project_config.model or "(default)"
+        max_turns_str = str(project_config.max_turns) if project_config.max_turns else "(default)"
+
+        lines = [
+            f"**Autonomy — {project}** ({week_key})",
+            f"Status: {enabled_str}  •  Model: `{model_str}`  •  Max turns: {max_turns_str}",
+            f"Budget: {budget_str}",
+            f"Runs: {runs_this_week} this week, {runs_today} today  •  Last: {last_str}",
+            f"Roadmap: {roadmap_str}  •  Next check: daily ~10:00 UTC (staggered)",
+            f"Pre-flight: {preflight_str}",
+        ]
+        await ctx.send("\n".join(lines))
 
     @commands.command(name="addproject")
     async def cmd_addproject(
@@ -690,7 +862,6 @@ class HeraldBot(commands.Bot):
 
         # Queue worker — runs forever, consuming tasks one at a time
         # Use asyncio.get_event_loop() — self.loop is deprecated in discord.py 2.x
-        import asyncio
         asyncio.get_event_loop().create_task(
             self.task_queue.worker(self.projects, run_agent),
             name="herald-queue-worker",
@@ -711,7 +882,6 @@ class HeraldBot(commands.Bot):
         )
 
     async def on_ready(self) -> None:
-        import os
         project_names = ", ".join(self.projects.keys()) or "none"
         log.info("Herald is online as %s — projects: %s", self.user, project_names)
         print(f"Herald online as {self.user} | Projects: {project_names}")
@@ -739,8 +909,6 @@ class HeraldBot(commands.Bot):
         bootstrapping agent run to write one automatically. A project without a soul starts
         each run with no identity or memory — the bootstrap makes it a real agent immediately.
         """
-        from pathlib import Path
-
         for name, project in self.projects.items():
             soul_path = Path(project.path) / "SOUL.md"
             if not soul_path.exists():
@@ -976,7 +1144,7 @@ class HeraldBot(commands.Bot):
         else:
             return False, f"git clone failed:\n```\n{result.stderr.strip()}\n```"
 
-    _WEBHOOKS_FILE = Path("data/webhooks.json")
+    _WEBHOOKS_FILE = Path(os.environ.get("HERALD_DATA_DIR", "data")) / "webhooks.json"
 
     @staticmethod
     def _load_webhooks() -> dict[str, str]:

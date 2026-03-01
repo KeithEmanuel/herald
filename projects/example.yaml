@@ -26,6 +26,17 @@ agent_name: "Argent"            # display name used when posting via webhook
 # webhook_url: null             # fallback static URL; Herald stores the dynamic URL in data/webhooks.json
 # webhook_avatar_url: null      # URL for per-post avatar override — usually leave null
 
+# Optional: Claude model override for this project's agent runs.
+# Empty / omitted = use the Claude Code CLI's built-in default model.
+# Examples: "claude-opus-4-5" (most capable), "claude-haiku-4-5-20251001" (fastest/cheapest)
+# Passed to the CLI as: --model <value>
+# model: "claude-opus-4-5"
+
+# Optional: cap on agentic iterations per run. Prevents runaway tasks that loop too long.
+# 0 / omitted = Claude Code default (no explicit cap).
+# Passed to the CLI as: --max-turns <value>
+# max_turns: 10
+
 git:
   # If true, the Claude agent may commit locally during a run.
   # Commits are always local until the owner approves a push via Discord reaction.
@@ -55,6 +66,55 @@ deploy:
   # If true, Herald automatically triggers a deploy after you approve a git push (👍).
   # If false (default), use !deploy myproject to deploy manually.
   auto_deploy_on_push: false
+
+# ---------------------------------------------------------------------------
+# Autonomous development mode (optional)
+# ---------------------------------------------------------------------------
+# When enabled, Herald checks daily whether you've been inactive. If so, the
+# agent picks ONE unchecked roadmap item, implements it, commits locally, and
+# posts a push proposal for you to review. The existing 👍/👎 flow handles
+# everything — nothing ships without your approval.
+#
+# Budget is measured in wall-clock minutes per ISO week (resets Monday UTC).
+# Autonomous runs do NOT update the accountability clock — that tracks your
+# engagement, not the agent's.
+#
+# Enable from Discord: !autonomy myproject on 210
+# Check status:        !autonomy myproject status
+# Disable:             !autonomy myproject off
+# ---------------------------------------------------------------------------
+# autonomous:
+#   enabled: false
+#
+#   # Wall-clock minutes the agent may use autonomously per week.
+#   # Resets each ISO week (Monday midnight UTC).
+#   weekly_minutes: 210         # ~3.5 hours
+#
+#   # Informational: minutes to reserve for your own use.
+#   # Not enforced — your runs are never blocked. Shown in !autonomy status.
+#   reserve_minutes: 90         # ~1.5 hours
+#
+#   # Minimum hours between autonomous runs. Spreads usage across the week.
+#   min_gap_hours: 20
+#
+#   # Hard cap: autonomous runs per calendar day.
+#   max_per_day: 1
+#
+#   # Files checked for unchecked roadmap items (- [ ] format), tried in order.
+#   # If none have unchecked items, the run is skipped.
+#   roadmap_paths:
+#     - docs/roadmap.md
+#     - ROADMAP.md
+#     - TODO.md
+#
+#   # Custom task prompt. If omitted, uses Herald's built-in default:
+#   # "Pick ONE unchecked roadmap item. Implement it. Commit. Summarize."
+#   # task: ""
+#
+#   # Token budget: if > 0, limits autonomous runs by API token count (input + output)
+#   # rather than wall-clock minutes. More precise — actual cost from the API.
+#   # 0 = disabled; uses weekly_minutes as the budget instead.
+#   # weekly_tokens: 500000      # ~500K tokens/week
 
 # ---------------------------------------------------------------------------
 # Cron-triggered tasks

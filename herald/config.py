@@ -50,6 +50,47 @@ class ScheduleEntry(BaseModel):
     task: str
 
 
+class AutonomousConfig(BaseModel):
+    """Controls autonomous development mode for a project.
+
+    When enabled, Herald checks daily whether the operator has been inactive
+    and, if so, queues an agent run to pick and implement a roadmap item.
+    The agent commits locally; the existing push-approval flow handles review.
+    """
+
+    # Master switch. Off by default — opt in per project via !autonomy <project> on
+    enabled: bool = False
+
+    # Maximum wall-clock minutes the agent may consume autonomously in a 7-day ISO week.
+    # Resets automatically when the ISO week rolls over (Monday midnight UTC).
+    weekly_minutes: int = 210
+
+    # Informational: minutes notionally reserved for operator-directed work.
+    # Not enforced — operator runs are never blocked. Shown in !autonomy status.
+    reserve_minutes: int = 90
+
+    # Minimum hours between autonomous runs. Prevents back-to-back sessions and
+    # spreads usage across the week naturally.
+    min_gap_hours: int = 20
+
+    # Hard cap on autonomous runs per calendar day (UTC).
+    max_per_day: int = 1
+
+    # Files to check for unchecked roadmap items (- [ ] format), tried in order.
+    # First file found with unchecked items wins. If none match, the run is skipped.
+    roadmap_paths: list[str] = ["docs/roadmap.md", "ROADMAP.md", "TODO.md"]
+
+    # Custom task prompt for autonomous runs. If empty, uses the built-in default
+    # which asks the agent to pick one roadmap item and implement it.
+    task: str = ""
+
+    # Optional token budget for autonomous runs (input + output tokens per ISO week).
+    # When > 0, this is used instead of weekly_minutes as the budget check.
+    # Token counts come from --output-format json (actual API usage, not wall-clock proxy).
+    # 0 = disabled; use weekly_minutes as the budget.
+    weekly_tokens: int = 0
+
+
 class ProjectConfig(BaseModel):
     """Full config for one registered project."""
 
@@ -83,6 +124,18 @@ class ProjectConfig(BaseModel):
 
     # Optional cron-triggered scheduled tasks
     schedule: list[ScheduleEntry] = []
+
+    # Optional Claude model override for this project's agent runs.
+    # Examples: "claude-opus-4-5", "claude-haiku-4-5-20251001"
+    # Empty string (default) uses the Claude Code CLI's built-in default model.
+    model: str = ""
+
+    # Optional cap on agentic iterations per run. Prevents runaway tasks that would
+    # otherwise loop indefinitely. 0 = use Claude Code's default (no explicit cap).
+    max_turns: int = 0
+
+    # Optional autonomous development mode
+    autonomous: AutonomousConfig = AutonomousConfig()
 
     @field_validator("path")
     @classmethod

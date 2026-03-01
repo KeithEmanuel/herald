@@ -2,7 +2,7 @@
 __main__.py — Herald entry point.
 
 Run with:  python -m herald
-           (from the herald/ directory, or with PYTHONPATH set to herald/)
+           (from repo root, or anywhere after `pip install -e .`)
 
 Loads environment variables from .env if present, then starts the Discord bot.
 The bot's setup_hook starts the queue worker and scheduler before the bot connects.
@@ -37,8 +37,11 @@ def main() -> None:
         log.error("DISCORD_TOKEN is not set. Set it in .env or the environment.")
         sys.exit(1)
 
-    # Projects directory — default to ./projects relative to this file
-    projects_dir_str = os.environ.get("HERALD_PROJECTS_DIR", str(Path(__file__).parent / "projects"))
+    # Projects directory — default to ./projects relative to the repo root (parent of herald/)
+    projects_dir_str = os.environ.get(
+        "HERALD_PROJECTS_DIR",
+        str(Path(__file__).parent.parent / "projects")
+    )
     projects_dir = Path(projects_dir_str)
 
     if not projects_dir.exists():
@@ -46,7 +49,7 @@ def main() -> None:
         sys.exit(1)
 
     # Import here so env vars are loaded before module-level constants are evaluated
-    from bot import HeraldBot
+    from .bot import HeraldBot
 
     # Optional: restrict push approvals to a specific Discord user ID
     operator_id_str = os.environ.get("HERALD_OPERATOR_ID")

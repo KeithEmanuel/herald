@@ -12,6 +12,7 @@ The queue is unbounded — we trust the scheduling layer not to flood it.
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
@@ -46,6 +47,22 @@ class AgentTask:
     # Set to False for non-agent tasks so they don't reset the inactivity clock.
     record_activity: bool = True
 
+    # Wall-clock seconds the run took. Set by the worker after completion.
+    # Available in on_complete callbacks (evaluated after the worker sets it).
+    duration_seconds: float | None = None
+
+    # Total API tokens consumed (input + output). Set by the worker from the
+    # run_agent return value. None for non-agent tasks (deploys, custom run_fns).
+    tokens_used: int | None = None
+
+    # Optional Claude model override for this task. Passed as --model to the CLI.
+    # None = use the CLI's default model.
+    model: str | None = None
+
+    # Optional cap on agentic iterations. Passed as --max-turns to the CLI.
+    # None = use the CLI default (no explicit cap).
+    max_turns: int | None = None
+
     def __post_init__(self):
         if not self.label:
             self.label = self.task[:60] + ("…" if len(self.task) > 60 else "")
@@ -79,14 +96,15 @@ class TaskQueue:
         """The task currently being executed, or None if idle."""
         return self._current
 
-    async def worker(self, projects: Any, run_fn: Callable[[str, str], Awaitable[str]]) -> None:
+    async def worker(self, projects: Any, run_fn: Any) -> None:
         """
         Long-running queue consumer. Call as an asyncio background task.
 
         Args:
             projects: dict[str, ProjectConfig] — looks up project.path by name
-            run_fn: async function(project_path, task_prompt) -> output_string
-                    Typically agent_runner.run_agent
+            run_fn: async function(project_path, task_prompt, *, model, max_turns)
+                    -> tuple[str, int]   (output text, total tokens)
+                    Typically agent_runner.run_agent.
         """
         log.info("Task queue worker started.")
         while True:
@@ -99,12 +117,28 @@ class TaskQueue:
                 if project is None:
                     output = f"[ERROR] Unknown project '{task.project_name}'. Is it configured?"
                 else:
-                    # Use task-specific run_fn if provided (e.g. for deploys),
-                    # otherwise fall back to the default agent runner.
-                    fn = task.run_fn or run_fn
-                    output = await fn(project.path, task.task)
+                    _start = time.monotonic()
+                    if task.run_fn is not None:
+                        # Custom run function (deploys, non-agent tasks) — returns str
+                        output = await task.run_fn(project.path, task.task)
+                        task.tokens_used = None
+                    else:
+                        # Default agent runner — returns tuple[str, int] (text, tokens).
+                        # Pass task-specific model/max_turns overrides from the task.
+                        result = await run_fn(
+                            project.path,
+                            task.task,
+                            model=task.model,
+                            max_turns=task.max_turns,
+                        )
+                        if isinstance(result, tuple):
+                            output, tokens = result
+                        else:
+                            output, tokens = result, 0
+                        task.tokens_used = tokens
+                    task.duration_seconds = time.monotonic() - _start
                     if task.record_activity:
-                        from activity import record_activity
+                        from .activity import record_activity
                         record_activity(task.project_name)
 
                 await task.on_complete(output)

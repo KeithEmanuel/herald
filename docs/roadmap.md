@@ -66,17 +66,26 @@ These complete the core experience before going public.
 - [ ] **Discord embed formatting** — push proposals and run summaries should use Discord embeds
       (fields, colors, timestamp) rather than plain text code blocks.
 
-- [ ] **Test suite** — `tests/test_queue.py` (serial invariant, task ordering),
-      `tests/test_config.py` (YAML validation, error cases), `tests/test_git_ops.py`
+- [x] **Test suite** — `tests/test_queue.py` (serial invariant, task ordering, duration tracking),
+      `tests/test_config.py` (YAML validation + AutonomousConfig), `tests/test_autonomy.py`
+      (21 tests: roadmap detection, budget tracking, all 7 pre-flight conditions). 54 tests total.
+
+- [x] **Python package restructure** — all source moved to `herald/` package; relative imports;
+      `pyproject.toml` updated with scripts entry point + pytest config + ruff lint;
+      `Dockerfile` updated to `python -m herald`; `HERALD_DATA_DIR` env var support added.
 
 - [ ] **Blog aggregation** — agents write `blog/YYYY-MM-DD-*.md` in their project repos;
       Herald aggregates and posts a weekly digest to a Herald-level Discord channel.
 
 ---
 
-## Phase 2 — Multi-Operator
+## Phase 2 — Autonomous & Multi-Operator
 
-Herald is single-operator today. These open it up.
+- [x] **Autonomous development mode** — per-project weekly minute budget; daily pre-flight
+      check (SOUL.md, roadmap items, operator idle, gap, daily cap); `!autonomy` Discord
+      command with `on`/`off`/`status`/`budget`/`reserve` subcommands; `data/autonomy.json`
+      tracking with ISO-week and calendar-day reset logic. Autonomous runs use
+      `record_activity=False` to keep the accountability clock honest. (2026-03-01)
 
 - [ ] **Per-operator permission scoping** — restrict which Discord users can trigger which
       projects (currently any server member can `!run`)
@@ -102,6 +111,43 @@ Herald is single-operator today. These open it up.
       pattern kit docs
 - [ ] **Projects registry** (optional) — public list of Herald deployments / agents,
       if operators want to be listed
+
+---
+
+## Long-Term Possibilities
+
+Capabilities identified as worth doing eventually, but not yet prioritized.
+These are real features with clear value — just not Phase 1-2 scope.
+
+- **MCP servers per project** — Each project can have its own `.mcp.json` configuring
+  Model Context Protocol servers (GitHub, Sentry, databases, etc.). Works in `--print`
+  mode. Enables agents to query live data sources without custom tool code.
+
+- **Hooks per project** — `.claude/settings.json` in each project repo supports hooks:
+  `PreToolUse`, `PostToolUse`, `Stop`. Enables per-project: auto-commit after writes,
+  token/cost logging to a file, blocking forbidden tools (e.g. `Bash` for read-only agents).
+  Works in `--print` mode.
+
+- **`--append-system-prompt`** — Inject operator context (MEMORY.md summary, Herald
+  status) into every agent's system prompt without touching the project's own CLAUDE.md.
+  Useful for coordination notes like "this week we're focusing on performance".
+
+- **`--max-budget-usd`** — Hard cost cap per run (USD). Complements `max_turns` as
+  a safeguard. Per-project config field once we confirm the CLI flag behavior.
+
+- **Skills / slash commands in template kit** — Operator-facing Claude Code slash commands
+  (`.claude/commands/`) for common workflows: `!run myproject /weekly-review`,
+  `/security-audit`, `/deps-update`. Useful for interactive operator sessions.
+  Not usable in Herald's non-interactive `--print` mode, but valuable in the template kit.
+
+- **ruamel.yaml for round-trip YAML** — Current `yaml.dump()` destroys operator-written
+  comments when `!schedule`/`!autonomy` rewrites a project YAML. `ruamel.yaml` preserves
+  them on round-trip. Low urgency (comments are documentation, not config), but worth
+  doing before public release.
+
+- **`--output-format json` token logging** — Herald already captures token counts from
+  agent runs. Worth persisting to `data/tokens.json` for a per-project weekly/monthly
+  cost report accessible via `!tokens <project>` or a status embed.
 
 ---
 

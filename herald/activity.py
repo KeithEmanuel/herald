@@ -10,13 +10,15 @@ Nothing fancy: agent runs are infrequent enough that file I/O is not a bottlenec
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 # Persisted via Docker volume — see compose.yaml
-DATA_DIR = Path("data")
+# Override via HERALD_DATA_DIR env var (useful for running outside Docker)
+DATA_DIR = Path(os.environ.get("HERALD_DATA_DIR", "data"))
 ACTIVITY_FILE = DATA_DIR / "activity.json"
 
 # Inactivity thresholds (days) and their corresponding tone

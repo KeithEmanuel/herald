@@ -60,29 +60,35 @@ Agent Runner            Deploy Runner
 ```
 
 ```
-herald/
-  __main__.py     # Entry point — loads env, starts bot + event loop
-  bot.py          # Discord bot — commands, reactions, webhook posting, approval flow
-  agent_runner.py # Wraps claude CLI — runs agent subprocess, returns output
-  task_queue.py   # Serial asyncio FIFO queue — one task at a time globally
-  scheduler.py    # APScheduler — cron tasks per project, staggered by index
-  config.py       # Pydantic config loader — validates projects/*.yaml
-  git_ops.py      # Git push/discard helpers for approval flow
-  deploy.py       # docker compose up --build -d for project containers
-  activity.py     # Reads/writes data/activity.json — inactivity tracking
-  SOUL.md         # Argent's persistent identity (maintained by Argent)
-  MEMORY.md       # Working context, tiered memory (maintained by Argent)
-  projects/       # One YAML per registered project (private — gitignored)
-    example.yaml  # Template / docs-by-example
-  templates/      # Starter kit: SOUL.md, MEMORY.md, CLAUDE.md, humans/
-  docs/
-    spec.md           # This file
-    roadmap.md        # Herald priorities by phase
-    agent-pattern.md  # Reusable agent identity pattern
-  Dockerfile
-  compose.yaml    # Standalone Herald service (not nested in main docker stack)
-  pyproject.toml
-  .env.example
+herald/                 # Python package — all source lives here
+  __init__.py           # Package marker; __version__
+  __main__.py           # Entry point — `python -m herald`
+  bot.py                # Discord bot — commands, reactions, webhook posting, approval flow
+  agent_runner.py       # Wraps claude CLI — runs agent subprocess, returns output
+  task_queue.py         # Serial asyncio FIFO queue — one task at a time globally
+  scheduler.py          # APScheduler — cron tasks per project, staggered by index
+  config.py             # Pydantic config loader — validates projects/*.yaml
+  git_ops.py            # Git push/discard helpers for approval flow
+  deploy.py             # docker compose up --build -d for project containers
+  activity.py           # Reads/writes data/activity.json — inactivity tracking
+  autonomy.py           # Autonomous dev mode — pre-flight, budget tracking, roadmap detection
+SOUL.md                 # Argent's persistent identity (maintained by Argent)
+MEMORY.md               # Working context, tiered memory (maintained by Argent)
+CLAUDE.md               # Project instructions for Claude Code
+humans/                 # Operator profiles — read by agent during soul bootstrap
+projects/               # One YAML per registered project (private — gitignored)
+  example.yaml          # Template / docs-by-example
+scripts/
+  preflight.py          # Pre-deployment connectivity and permissions check
+templates/              # Starter kit: SOUL.md, MEMORY.md, CLAUDE.md, humans/
+docs/
+  spec.md               # This file
+  roadmap.md            # Herald priorities by phase
+  agent-pattern.md      # Reusable agent identity pattern
+Dockerfile
+compose.yaml            # Standalone Herald service (not nested in main docker stack)
+pyproject.toml
+.env.example
 ```
 
 **Key invariant:** One agent runs at a time, globally. The queue is serial and unbounded.
@@ -201,6 +207,78 @@ then either paste the URL into `projects/<name>.yaml` as `webhook_url`, or into
 **Private repos:** Use SSH URLs (`git@github.com:user/repo.git`) for `!addproject`, not HTTPS.
 HTTPS clones require interactive credentials which aren't available inside the container.
 The `~/.ssh` directory is bind-mounted into the container for this purpose.
+
+---
+
+## Autonomous Development Mode
+
+When the operator hasn't been active recently, Herald can autonomously pick roadmap items,
+implement them, commit locally, and post push proposals for the operator to review.
+The existing `👍`/`👎` flow handles everything — nothing ships without approval.
+
+### How it works
+
+1. Herald registers a daily check job at 10am UTC (staggered per project) for each project
+   with `autonomous.enabled = true`
+2. Before queuing anything, a pre-flight checklist runs entirely in Python — no agent call:
+   - `autonomous.enabled` is `true`
+   - Project has `SOUL.md` (bootstrapped)
+   - Roadmap file contains at least one unchecked item (`- [ ]`)
+   - Weekly autonomous budget not exhausted (wall-clock minutes, resets each ISO week)
+   - Today's run count < `max_per_day`
+   - Minimum gap since last autonomous run is satisfied
+   - Operator has NOT been active in the last 24h
+3. If all checks pass, the agent runs: reads roadmap, picks ONE item, implements it, commits
+4. Agent output posts to the project channel; the existing push-approval proposal appears
+5. Operator reacts `👍` to push and test, or `👎` to discard
+
+Autonomous runs use `record_activity=False` — they do not reset the accountability clock.
+That clock measures operator engagement, not agent activity.
+
+### Config schema
+
+```yaml
+autonomous:
+  enabled: false            # opt in per project
+  weekly_minutes: 210       # wall-clock budget per ISO week (~3.5 hours)
+  reserve_minutes: 90       # informational — shown in !autonomy status
+  min_gap_hours: 20         # minimum hours between runs (spread across the week)
+  max_per_day: 1            # hard cap per calendar day
+  roadmap_paths:            # checked in order; first file with - [ ] wins
+    - docs/roadmap.md
+    - ROADMAP.md
+    - TODO.md
+  task: ""                  # custom prompt; empty = built-in default
+```
+
+### Discord commands
+
+| Command | Description |
+|---|---|
+| `!autonomy <project> on [minutes]` | Enable (optionally set weekly budget) |
+| `!autonomy <project> off` | Disable |
+| `!autonomy <project> status` | Show current week stats and pre-flight result |
+| `!autonomy <project> budget <minutes>` | Update weekly budget |
+| `!autonomy <project> reserve <minutes>` | Update informational reserve |
+
+### Data persistence
+
+Autonomous run stats are tracked in `data/autonomy.json` (persisted via Docker named volume):
+```json
+{
+  "myproject": {
+    "week_key": "2026-W09",
+    "autonomous_minutes": 47.3,
+    "runs_this_week": 2,
+    "runs_today": 1,
+    "today_date": "2026-03-02",
+    "last_run_ts": "2026-03-02T10:00:00+00:00"
+  }
+}
+```
+
+Weekly counters reset automatically when the ISO week rolls over. Daily counters reset
+when the calendar day changes. No manual intervention needed.
 
 ---
 

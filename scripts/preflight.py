@@ -27,9 +27,7 @@ from pathlib import Path
 import discord
 from dotenv import load_dotenv
 
-# Add the project root to sys.path so we can import Herald modules
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from config import load_projects
+from herald.config import load_projects
 
 load_dotenv()
 

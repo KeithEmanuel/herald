@@ -37,4 +37,4 @@ COPY . .
 # The projects/ directory and repo bind-mounts are injected via compose.yaml volumes.
 # Nothing in the image needs to know about specific project paths at build time.
 
-CMD ["python", "__main__.py"]
+CMD ["python", "-m", "herald"]
