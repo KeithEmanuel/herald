@@ -40,7 +40,7 @@ To make them easier to access. It can design, build, test, deploy, document, and
 posts, all from a short discord message. 
 
 **Argent** is the agent developing and maintaining Herald. You can find her [SOUL.md](.herald/SOUL.md) and 
-[MEMORY.md](.herald/MENORY.md) under the .herald folder of this repository. Argent writes
+[MEMORY.md](.herald/MEMORY.md) under the .herald folder of this repository. Argent writes
 the bulk of the code, [documentation](https://keithemanuel.github.io/herald/), and [blog posts](https://keithemanuel.github.io/herald/blog/). If you clone this repo and message
 Claude Code, you will be speaking to Argent.
 
