@@ -621,7 +621,7 @@ class HeraldCommands(commands.Cog, name="Herald"):
 
         # Default task content used when a project has no existing schedule
         default_task = (
-            "Read SOUL.md and MEMORY.md. Check the recent git log (last 5 commits). "
+            "Read .herald/SOUL.md and .herald/MEMORY.md. Check the recent git log (last 5 commits). "
             "What is the current state of the project? What is the single most "
             "important thing to work on next? Post a short status — 2-3 sentences "
             "— and end with a specific proposal: what you'd do if given the go-ahead. "
@@ -966,7 +966,7 @@ class HeraldCommands(commands.Cog, name="Herald"):
             {
                 "cron": "0 8 * * *",
                 "task": (
-                    "Read SOUL.md and MEMORY.md. Check the recent git log (last 5 commits). "
+                    "Read .herald/SOUL.md and .herald/MEMORY.md. Check the recent git log (last 5 commits). "
                     "What is the current state of the project? What is the single most "
                     "important thing to work on next? Post a short status — 2-3 sentences "
                     "— and end with a specific proposal: what you'd do if given the go-ahead. "
@@ -1118,38 +1118,61 @@ class HeraldBot(commands.Bot):
                     f"Type `!help` for available commands."
                 )
 
-        # Check that each project has a SOUL.md — a project without a soul is just files.
+        # Check that each project has a .herald/SOUL.md — a project without a soul is just files.
         await self._check_project_souls()
 
     async def _scaffold_project_files(self, repo_path: Path, display_name: str) -> list[str]:
         """
         Copy Herald framework template files into a project repo if they don't exist.
 
-        Creates CLAUDE.md and MEMORY.md from templates/, and creates the humans/ directory
-        so the operator has a clear place to drop their profile. Only touches files that
-        are missing — existing files are never overwritten.
+        Creates CLAUDE.md at the repo root (Claude Code requires it there) and a .herald/
+        directory containing MEMORY.md and humans/ with operator profiles copied from
+        Herald's own .herald/humans/ directory — so the new agent knows who they're
+        working with from the first bootstrap run.
+        Only touches files that are missing — existing files are never overwritten.
 
         Commits any newly created files to the repo so they persist.
         Returns a list of file paths that were scaffolded.
         """
         templates_dir = Path(__file__).parent.parent / "templates"
+        herald_dir = repo_path / ".herald"
+        herald_dir.mkdir(exist_ok=True)
         scaffolded: list[str] = []
 
-        for filename in ("CLAUDE.md", "MEMORY.md"):
-            dest = repo_path / filename
-            if not dest.exists():
-                template_path = templates_dir / filename
-                if template_path.exists():
-                    content = template_path.read_text().replace("[Project Name]", display_name)
-                    dest.write_text(content)
-                    scaffolded.append(filename)
+        # CLAUDE.md stays at the repo root — Claude Code auto-discovers it there.
+        claude_dest = repo_path / "CLAUDE.md"
+        if not claude_dest.exists():
+            template_path = templates_dir / "CLAUDE.md"
+            if template_path.exists():
+                content = template_path.read_text().replace("[Project Name]", display_name)
+                claude_dest.write_text(content)
+                scaffolded.append("CLAUDE.md")
 
-        # Create humans/ with .gitkeep so the operator sees a clear place for profiles
-        humans_dir = repo_path / "humans"
+        # MEMORY.md goes into .herald/ — it's a Herald framework file, not a project artifact.
+        memory_dest = herald_dir / "MEMORY.md"
+        if not memory_dest.exists():
+            template_path = templates_dir / "MEMORY.md"
+            if template_path.exists():
+                content = template_path.read_text().replace("[Project Name]", display_name)
+                memory_dest.write_text(content)
+                scaffolded.append(".herald/MEMORY.md")
+
+        # Copy operator profile files from Herald's own .herald/humans/ directory.
+        # This ensures every new agent knows who they're working with from day one.
+        herald_humans_dir = Path(__file__).parent.parent / ".herald" / "humans"
+        humans_dir = herald_dir / "humans"
         if not humans_dir.exists():
             humans_dir.mkdir()
+        if herald_humans_dir.is_dir():
+            for profile in herald_humans_dir.glob("*.md"):
+                dest_profile = humans_dir / profile.name
+                if not dest_profile.exists():
+                    dest_profile.write_text(profile.read_text())
+                    scaffolded.append(f".herald/humans/{profile.name}")
+        # If no profiles were copied and the directory is empty, add .gitkeep
+        if not any(humans_dir.iterdir()):
             (humans_dir / ".gitkeep").touch()
-            scaffolded.append("humans/.gitkeep")
+            scaffolded.append(".herald/humans/.gitkeep")
 
         if scaffolded:
             try:
@@ -1163,7 +1186,8 @@ class HeraldBot(commands.Bot):
                 proc = await asyncio.create_subprocess_exec(
                     "git", "commit", "-m",
                     "chore: scaffold Herald agent framework files\n\n"
-                    "Added by !addproject: CLAUDE.md template, MEMORY.md template, humans/",
+                    "Added by !addproject: CLAUDE.md template, .herald/MEMORY.md template, "
+                    ".herald/humans/ (with operator profiles)",
                     cwd=repo_path,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
@@ -1184,32 +1208,31 @@ class HeraldBot(commands.Bot):
         (for the newly registered project). A project without a soul gets generic
         output — the bootstrap gives it an identity, memory, and an introduction.
         """
-        soul_path = Path(project.path) / "SOUL.md"
+        soul_path = Path(project.path) / ".herald" / "SOUL.md"
         if soul_path.exists():
             return
 
         if channel:
             await channel.send(
-                f"👻 **`{name}` has no SOUL.md.** "
+                f"👻 **`{name}` has no .herald/SOUL.md.** "
                 f"Bootstrapping agent soul — I'll introduce myself when ready."
             )
-        log.warning("Project '%s' missing SOUL.md — queuing bootstrap run", name)
+        log.warning("Project '%s' missing .herald/SOUL.md — queuing bootstrap run", name)
 
         bootstrap_task = (
             "You are a new agent on this project. This is your first run. "
             "Do the following:\n"
             "1. Read CLAUDE.md — it's your project instructions. Fill in any template "
             "placeholders ([...]) with real information based on what you find in the repo.\n"
-            "2. Look in the humans/ directory for any operator profiles — "
+            "2. Look in the .herald/humans/ directory for any operator profiles — "
             "they tell you how this person works and what they care about.\n"
             "3. Briefly explore the codebase (README, main source files, "
             "package files, any existing docs).\n"
-            "4. Write SOUL.md. Choose a name that fits this project and what "
-            "you've learned about the people here. Write your role, your values, "
-            "and a personality that reflects how you'll actually work here. "
-            "Heraldic tincture names (Argent, Or, Sable...) are one option — "
-            "pick whatever fits.\n"
-            "5. Update MEMORY.md Core Memories with what you learned about the "
+            "4. Write .herald/SOUL.md. Choose a name that fits this project and the people "
+            "here — something that reflects the project's character, not just the "
+            "first available name from any list. Write your role, your values, "
+            "and a personality that reflects how you'll actually work here.\n"
+            "5. Update .herald/MEMORY.md Core Memories with what you learned about the "
             "architecture and key decisions. The template sections are already there.\n"
             "6. Post a short introduction: your name, your read on the project, "
             "and what you're here to do. 2-3 sentences. No fluff."

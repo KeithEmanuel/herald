@@ -17,7 +17,7 @@ remember what it was working on, commit real changes, and wait for your approval
 
 Herald solves it:
 
-- **Persistent identity.** Each agent has a `SOUL.md` — a file it writes and maintains itself,
+- **Persistent identity.** Each agent has a `.herald/SOUL.md` — a file it writes and maintains itself,
   in the project's git repo. It survives restarts, travels across machines, and evolves over time.
   After a few weeks, your agent has opinions. It knows the codebase. It knows you.
 
@@ -53,7 +53,7 @@ Herald solves it:
 - **Deploys** — Herald runs `docker compose up --build -d` for project containers on command
 - **Accountability** — Herald notices when you go dark on a project and says something
 - **Per-agent identity** — each agent posts to Discord with its own name and avatar
-- **Soul creation** — Herald checks that each project has a `SOUL.md` and offers to create one
+- **Soul creation** — Herald checks that each project has a `.herald/SOUL.md` and offers to create one
 - **Autonomous mode** — configurable time budget; agents self-assign roadmap items when you're idle
 
 One agent runs at a time, globally. This prevents rate limit collisions and makes token costs
@@ -237,7 +237,7 @@ autonomous:
 
 Before queuing anything, Herald runs a pre-flight checklist in Python (no agent calls):
 - Is autonomous mode enabled?
-- Does the project have `SOUL.md`?
+- Does the project have `.herald/SOUL.md`?
 - Are there unchecked items in the roadmap?
 - Is the weekly budget not exhausted?
 - Has the daily cap not been hit?
@@ -277,7 +277,7 @@ deploy:
 schedule:
   - cron: "0 8 * * *"
     task: >
-      Read SOUL.md and MEMORY.md. Reflect on project status...
+      Read .herald/SOUL.md and .herald/MEMORY.md. Reflect on project status...
 
 autonomous:
   enabled: false
@@ -299,13 +299,13 @@ to project containers via a shared network.
 
 ## Agent Identity — SOUL.md
 
-Each project should have a `SOUL.md` at its root — a persistent identity file maintained by
+Each project should have a `.herald/SOUL.md` — a persistent identity file maintained by
 the project agent. Herald checks for this on startup and offers to create one if it's missing.
 
-SOUL.md lives in the project's git repo — it survives container restarts, travels across
+`.herald/SOUL.md` lives in the project's git repo — it survives container restarts, travels across
 machines, and evolves via the normal push-approval flow. It's readable by humans.
 
-Write a `humans/<yourname>.md` profile in your project before the first soul bootstrap — the
+Write a `.herald/humans/<yourname>.md` profile in your project before the first soul bootstrap — the
 agent uses it to pick a name and personality that fits the project and operator.
 
 See `docs/agent-pattern.md` for the full agent identity pattern.

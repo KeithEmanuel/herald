@@ -29,8 +29,9 @@ def make_project(tmp_path: Path, enabled: bool = True, **autonomous_kwargs):
     """Build a minimal ProjectConfig-like object with AutonomousConfig."""
     from herald.config import AutonomousConfig, ProjectConfig
 
-    # Ensure SOUL.md exists by default (most tests want checks to pass it)
-    soul = tmp_path / "SOUL.md"
+    # Ensure .herald/SOUL.md exists by default (most tests want checks to pass it)
+    (tmp_path / ".herald").mkdir(exist_ok=True)
+    soul = tmp_path / ".herald" / "SOUL.md"
     if not soul.exists():
         soul.write_text("# Soul")
 
@@ -222,7 +223,7 @@ def test_should_run_disabled_returns_false(tmp_path):
 
 def test_should_run_no_soul_md_returns_false(tmp_path):
     project = make_project(tmp_path, enabled=True)
-    (tmp_path / "SOUL.md").unlink()  # remove it
+    (tmp_path / ".herald" / "SOUL.md").unlink()  # remove it
 
     with patch.object(autonomy, "DATA_FILE", tmp_path / "autonomy.json"):
         ok, reason = should_run_autonomous(project)
@@ -364,7 +365,8 @@ def test_should_run_token_budget_exhausted_returns_false(tmp_path):
     data_file = tmp_path / "autonomy.json"
 
     # Set up a project with token budget of 1000
-    soul = tmp_path / "SOUL.md"
+    (tmp_path / ".herald").mkdir(exist_ok=True)
+    soul = tmp_path / ".herald" / "SOUL.md"
     soul.write_text("# Soul")
     roadmap = tmp_path / "docs" / "roadmap.md"
     roadmap.parent.mkdir(exist_ok=True)
@@ -393,7 +395,8 @@ def test_should_run_token_budget_passes_when_under_limit(tmp_path):
 
     data_file = tmp_path / "autonomy.json"
 
-    soul = tmp_path / "SOUL.md"
+    (tmp_path / ".herald").mkdir(exist_ok=True)
+    soul = tmp_path / ".herald" / "SOUL.md"
     soul.write_text("# Soul")
     roadmap = tmp_path / "docs" / "roadmap.md"
     roadmap.parent.mkdir(exist_ok=True)

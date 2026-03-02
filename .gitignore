@@ -18,9 +18,11 @@ venv/
 # Data directory — activity logs, etc. (runtime state, not source)
 data/
 
-# Contributor profiles — private, per-developer context for the agent
-humans/
-!humans/template.md
+# Contributor profiles — private, per-developer context for the agent.
+# .herald/humans/* ignores the contents but allows file-level exceptions (unlike dir/ which blocks all).
+# keith.md is tracked in Herald's repo because it gets copied to new project repos at !addproject time.
+.herald/humans/*
+!.herald/humans/keith.md
 
 # Claude Code local session state (permissions, tool approvals)
 .claude/

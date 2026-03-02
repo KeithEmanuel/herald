@@ -1,8 +1,8 @@
 # CLAUDE.md — [Project Name]
 
-> Read SOUL.md and MEMORY.md before doing anything else this session.
+> Read `.herald/SOUL.md` and `.herald/MEMORY.md` before doing anything else this session.
 > SOUL.md is the agent's identity. MEMORY.md is the working context.
-> Both are maintained by the agent. Don't skip them.
+> Both live in `.herald/` and are maintained by the agent. Don't skip them.
 
 ---
 
@@ -89,7 +89,7 @@ The agent treats these as non-negotiable and will flag any changes that touch th
 
 **Required. Not optional. Do this before finishing.**
 
-1. Update MEMORY.md:
+1. Update `.herald/MEMORY.md`:
    - Move session notes into short-term memories
    - Promote anything from short-term that has aged into long-term
    - Add to core memories if anything foundational changed
@@ -103,6 +103,6 @@ The agent treats these as non-negotiable and will flag any changes that touch th
    - Log any changes that shipped
    - Include: what changed, who requested it, who implemented it
 
-4. Check SOUL.md:
+4. Check `.herald/SOUL.md`:
    - If something important changed about the project, the relationship, or a key decision:
      add a core memory

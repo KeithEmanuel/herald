@@ -95,6 +95,18 @@ These complete the core experience before going public.
       without editing the YAML
 - [ ] **Queue introspection** — `!queue` command shows what's pending and what's running
 
+- [ ] **Multiple agents per project** — each project has a primary agent (used in Discord
+      channel, daily cron) but can invoke specialist agents when needed: UI designer,
+      domain SME, security reviewer, code reviewer, etc. Operator can set roles in project
+      config; `!run <project> --as <role> <task>` routes to the appropriate agent.
+      Primary agent can also spawn sub-agents directly for specialist work.
+
+- [ ] **Integration test suite** — automated end-to-end tests against a real (or stubbed)
+      Herald stack. Priority scenarios: fresh `!addproject` from GitHub URL verifies `.herald/`
+      scaffold is created and committed; soul bootstrap run produces `.herald/SOUL.md`;
+      push-approval flow (agent commit → proposal → 👍 → push confirmed). Current unit tests
+      cover queue/config/autonomy logic — this closes the gap between unit tests and real deploys.
+
 ---
 
 ## Phase 3 — Public Release
@@ -139,6 +151,12 @@ These are real features with clear value — just not Phase 1-2 scope.
   (`.claude/commands/`) for common workflows: `!run myproject /weekly-review`,
   `/security-audit`, `/deps-update`. Useful for interactive operator sessions.
   Not usable in Herald's non-interactive `--print` mode, but valuable in the template kit.
+
+- **Multiple coding tool backends** — Herald currently hard-codes `claude` CLI. Abstracting
+  the agent runner (an `agent_runner` protocol with a `claude` implementation) would allow
+  Gemini CLI, Codex CLI, or other coding assistants as drop-in backends. Per-project
+  `tool: gemini` config field. Useful when operators want to compare tools or when budget
+  constraints favor a different model. The `.herald/` framework files are tool-agnostic.
 
 - **ruamel.yaml for round-trip YAML** — Current `yaml.dump()` destroys operator-written
   comments when `!schedule`/`!autonomy` rewrites a project YAML. `ruamel.yaml` preserves

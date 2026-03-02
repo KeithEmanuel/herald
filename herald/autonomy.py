@@ -191,9 +191,9 @@ def should_run_autonomous(project: "ProjectConfig") -> tuple[bool, str]:
     if not cfg.enabled:
         return False, "autonomous mode disabled"
 
-    soul_path = Path(project.path) / "SOUL.md"
+    soul_path = Path(project.path) / ".herald" / "SOUL.md"
     if not soul_path.exists():
-        return False, "project has no SOUL.md (run soul bootstrap first)"
+        return False, "project has no .herald/SOUL.md (run soul bootstrap first)"
 
     if not has_roadmap_items(project.path, cfg.roadmap_paths):
         return False, "no unchecked roadmap items found"

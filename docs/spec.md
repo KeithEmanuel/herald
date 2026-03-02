@@ -72,15 +72,16 @@ herald/                 # Python package — all source lives here
   deploy.py             # docker compose up --build -d for project containers
   activity.py           # Reads/writes data/activity.json — inactivity tracking
   autonomy.py           # Autonomous dev mode — pre-flight, budget tracking, roadmap detection
-SOUL.md                 # Argent's persistent identity (maintained by Argent)
-MEMORY.md               # Working context, tiered memory (maintained by Argent)
+.herald/
+  SOUL.md               # Argent's persistent identity (maintained by Argent)
+  MEMORY.md             # Working context, tiered memory (maintained by Argent)
+  humans/               # Operator profiles — read by agent during soul bootstrap
 CLAUDE.md               # Project instructions for Claude Code
-humans/                 # Operator profiles — read by agent during soul bootstrap
 projects/               # One YAML per registered project (private — gitignored)
   example.yaml          # Template / docs-by-example
 scripts/
   preflight.py          # Pre-deployment connectivity and permissions check
-templates/              # Starter kit: SOUL.md, MEMORY.md, CLAUDE.md, humans/
+templates/              # Starter kit: .herald/SOUL.md, .herald/MEMORY.md, CLAUDE.md, .herald/humans/
 docs/
   spec.md               # This file
   roadmap.md            # Herald priorities by phase
@@ -120,9 +121,9 @@ git:
 schedule:
   - cron: "0 8 * * *"            # 8am daily (staggered +15min per project index)
     task: >
-      Read SOUL.md and MEMORY.md. Write a brief journal entry noting
+      Read .herald/SOUL.md and .herald/MEMORY.md. Write a brief journal entry noting
       project status, any open questions, and anything that looks inconsistent
-      or needs attention. Update MEMORY.md if anything is worth remembering.
+      or needs attention. Update .herald/MEMORY.md if anything is worth remembering.
       Keep it under 200 words.
 
   - cron: "0 9 * * 1"            # 9am every Monday — optional blog post
@@ -225,7 +226,7 @@ The existing `👍`/`👎` flow handles everything — nothing ships without app
    with `autonomous.enabled = true`
 2. Before queuing anything, a pre-flight checklist runs entirely in Python — no agent call:
    - `autonomous.enabled` is `true`
-   - Project has `SOUL.md` (bootstrapped)
+   - Project has `.herald/SOUL.md` (bootstrapped)
    - Roadmap file contains at least one unchecked item (`- [ ]`)
    - Weekly autonomous budget not exhausted (wall-clock minutes, resets each ISO week)
    - Today's run count < `max_per_day`
@@ -335,8 +336,8 @@ Herald invokes Claude Code CLI non-interactively:
 cd <project_path> && claude -p "<task>" --print
 ```
 
-Claude Code reads the project's `CLAUDE.md` for context (which references `SOUL.md` and
-`MEMORY.md`). All Claude Code tools (Read, Write, Edit, Bash, Glob, Grep, Task) are available.
+Claude Code reads the project's `CLAUDE.md` for context (which references `.herald/SOUL.md` and
+`.herald/MEMORY.md`). All Claude Code tools (Read, Write, Edit, Bash, Glob, Grep, Task) are available.
 
 **Authentication:** Subscription auth via `~/.claude.json` (OAuth, not API key). Credentials
 are stored at `${HERALD_ROOT}/claude-auth.json` on the host, bind-mounted into the container
@@ -456,7 +457,7 @@ Herald is designed to be deployed by anyone, not just the original author.
 - **`projects/example.yaml`** serves as the primary documentation for the config schema.
 - **Single `docker compose up` deployment** — no manual setup steps beyond `.env`.
 - **`!addproject` for onboarding** — drop a new project in without touching files or restarting.
-- **SOUL.md is the agent's own file** — not part of the public API, but included because it's
+- **`.herald/SOUL.md` is the agent's own file** — not part of the public API, but included because it's
   what makes Herald interesting. Users can give their Herald its own identity.
 
 ---

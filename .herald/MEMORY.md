@@ -24,8 +24,13 @@ in `projects/*.yaml` (gitignored). Adding a new project = `!addproject`, never t
 **Agent naming convention:** Herald's own agents use heraldic tincture names by convention
 (Argent, Or, Sable, Gules, Azure, Vert, Purpure) — chosen, not assigned. But this is NOT
 a constraint for Herald-managed projects. Agents on other projects choose names that fit
-their project and operator, informed by `humans/` profiles written before the first session.
-Heraldic names are one option among many.
+their project and operator, informed by `.herald/humans/` profiles written before the first
+session. Heraldic names are one option among many.
+
+**Herald framework file layout:** Herald framework files live in `.herald/` subdirectory,
+not the project root. CLAUDE.md stays at root (Claude Code auto-discovers it there).
+Structure: `.herald/SOUL.md`, `.herald/MEMORY.md`, `.herald/humans/<name>.md`.
+This separates framework identity files from project artifacts.
 
 ---
 
@@ -69,9 +74,9 @@ Tracked via `_pending_pushes: dict[int, dict]` keyed on Discord message ID.
 **Accountability thresholds:** 14d = nudge, 21d = direct check-in, 28d+ = roast.
 Data stored in `data/activity.json`, persisted via named volume. Checked daily at 9am.
 
-**Memory architecture:** Primary persistent memory = `SOUL.md` in git (survives container
-restarts and machine changes). Secondary = `~/.claude` auto-memory, persisted via
-`herald_claude_memory` named volume in `compose.yaml`. SOUL.md wins on conflict.
+**Memory architecture:** Primary persistent memory = `.herald/SOUL.md` in git (survives
+container restarts and machine changes). Secondary = `~/.claude` auto-memory, persisted via
+`herald_claude_memory` named volume in `compose.yaml`. `.herald/SOUL.md` wins on conflict.
 
 **Deployment architecture:** Herald lives independently — NOT inside the main docker stack.
 It manages project containers via the container runtime socket (Docker or Podman rootless).
@@ -143,7 +148,8 @@ Don't run agents on untrusted/public repos without additional safeguards.
 
 **Doc structure:** `docs/spec.md` (full feature spec), `docs/agent-pattern.md` (reusable
 agent design pattern), `docs/roadmap.md` (roadmap). `templates/` — starter kit for new
-projects: SOUL.md, MEMORY.md, CLAUDE.md. `blog/` — agent-written posts for GitHub Pages.
+projects: SOUL.md, MEMORY.md, CLAUDE.md (CLAUDE.md at root; SOUL.md/MEMORY.md copied to
+`.herald/`). `blog/` — agent-written posts for GitHub Pages.
 
 ---
 
@@ -153,7 +159,20 @@ projects: SOUL.md, MEMORY.md, CLAUDE.md. `blog/` — agent-written posts for Git
 
 **Status (2026-03-02):** Core built and functional. All Phase 1.5 features complete.
 70/70 tests passing. Repo at /mnt/lvm-nvme/herald/repos/herald/. Watchdog active on host.
-Changes not yet committed.
+
+**Changes this session (2026-03-02, continued):**
+- Moved Herald framework files to `.herald/`: SOUL.md → `.herald/SOUL.md`,
+  MEMORY.md → `.herald/MEMORY.md`, humans/ → `.herald/humans/`
+- `.gitignore` updated: `humans/` → `.herald/humans/*` with `!.herald/humans/keith.md`
+- `herald/bot.py`: `_scaffold_project_files` now creates `.herald/` dir; places MEMORY.md
+  and humans/ profiles inside; reads operator profiles from Herald's own `.herald/humans/`
+- `herald/bot.py`: `_maybe_bootstrap_soul` checks `.herald/SOUL.md`; bootstrap prompt
+  updated to reference `.herald/` paths; naming prompt improved (no explicit tincture list)
+- `herald/autonomy.py`: soul check updated to `.herald/SOUL.md`
+- `CLAUDE.md` (Herald's own) and `templates/CLAUDE.md`: all path refs updated to `.herald/`
+- All docs updated (agent-pattern.md, spec.md, getting-started.md, README.md, example.yaml)
+- `tests/test_autonomy.py`: fixtures updated to create `.herald/SOUL.md`
+- All 70 tests still passing
 
 **Changes this session (2026-02-28, second session):**
 - HERALD_ROOT consolidation: replaced HERALD_REPOS_ROOT + HERALD_DEPLOYMENTS_DIR with single var
@@ -225,7 +244,7 @@ command + Herald managing itself (`projects/herald.yaml`). Priority before first
 - `tests/conftest.py` simplified (removed `sys.path` hack — package install handles it)
 - All test imports and `patch()` paths updated to `herald.X`
 - `scripts/preflight.py` updated to `from herald.config import load_projects`
-- `humans/keith.md` created (skeleton — Keith to fill in accountability preferences)
+- `.herald/humans/keith.md` created (skeleton — Keith to fill in accountability preferences)
 - 54/54 tests passing
 
 **Changes this session (2026-02-28, fourth+fifth sessions):**

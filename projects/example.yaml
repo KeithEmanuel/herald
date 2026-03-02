@@ -123,7 +123,7 @@ deploy:
 # Multiple projects with the same cron time are staggered +15min automatically.
 #
 # Task prompts run via: cd <path> && claude -p "<task>" --print
-# The agent reads CLAUDE.md, SOUL.md, and MEMORY.md for context.
+# The agent reads CLAUDE.md, .herald/SOUL.md, and .herald/MEMORY.md for context.
 # ---------------------------------------------------------------------------
 
 schedule:
@@ -131,9 +131,9 @@ schedule:
   # Keeps the agent's context fresh. Low cost, high value.
   - cron: "0 8 * * *"
     task: >
-      Read SOUL.md and MEMORY.md. Check recent git log (last 5 commits).
+      Read .herald/SOUL.md and .herald/MEMORY.md. Check recent git log (last 5 commits).
       Write a brief status note: what's in progress, what's blocked, what needs
-      attention today. Update MEMORY.md Short-Term if anything has changed.
+      attention today. Update .herald/MEMORY.md Short-Term if anything has changed.
       Post a 2-3 sentence summary as your response. Keep the whole thing under
       150 words of output.
 
@@ -150,7 +150,7 @@ schedule:
   # Re-prioritizes the backlog at the start of each week.
   # - cron: "0 9 * * 1"
   #   task: >
-  #     Read SOUL.md, MEMORY.md, and TASKS.md. Re-prioritize the backlog based
+  #     Read .herald/SOUL.md, .herald/MEMORY.md, and TASKS.md. Re-prioritize the backlog based
   #     on current project state. Move anything stale (no progress in 2+ weeks)
   #     to a Deferred section. Identify the top 3 things that should happen this
   #     week and post them to Discord as a short plan.
@@ -162,17 +162,17 @@ schedule:
   #     Write a retrospective (200-400 words): what shipped, what didn't, what
   #     you learned, what surprised you. Save it as blog/YYYY-MM-DD-weekly.md
   #     (create the blog/ directory if it doesn't exist) and commit it.
-  #     Update MEMORY.md with anything durable learned this week.
+  #     Update .herald/MEMORY.md with anything durable learned this week.
   #     Post a 2-3 sentence summary to Discord.
 
   # --- Monthly: Changelog review + memory prune ---
-  # Keeps MEMORY.md lean and creates a monthly record.
+  # Keeps .herald/MEMORY.md lean and creates a monthly record.
   # - cron: "0 9 1 * *"
   #   task: >
   #     Read CHANGELOG.md and TASKS.md. Write a monthly summary (200-300 words):
   #     what shipped, how the project looks vs. a month ago, what next month
   #     should focus on. Save as blog/YYYY-MM-monthly.md and commit it.
-  #     Prune stale Short-Term entries from MEMORY.md — anything more than
+  #     Prune stale Short-Term entries from .herald/MEMORY.md — anything more than
   #     2 weeks old that hasn't been promoted to Long-Term can be removed.
 
 # ---------------------------------------------------------------------------
@@ -180,20 +180,20 @@ schedule:
 # ---------------------------------------------------------------------------
 #
 # Do the work (open-ended session):
-#   !run myproject Read SOUL.md and MEMORY.md. Check TASKS.md for the
+#   !run myproject Read .herald/SOUL.md and .herald/MEMORY.md. Check TASKS.md for the
 #   highest-priority active item. Work on it. Commit any changes with a clear
 #   message. Report what you did and what's next.
 #
-# Onboard a new project (creates SOUL.md from scratch):
-#   Best results if you've written humans/<yourname>.md first — the agent uses it
+# Onboard a new project (creates .herald/SOUL.md from scratch):
+#   Best results if you've written .herald/humans/<yourname>.md first — the agent uses it
 #   to calibrate its name and personality to the project and operator.
 #
 #   !run myproject You are a new agent on this project. Read CLAUDE.md and explore
-#   the codebase. Check humans/ for any contributor profiles. Write SOUL.md —
+#   the codebase. Check .herald/humans/ for any contributor profiles. Write .herald/SOUL.md —
 #   choose a name that fits this project and what you know about the people here
 #   (any name is fine; Herald agents use heraldic tinctures, but that's a suggestion
 #   not a rule). Write your role and a personality that reflects how you'll actually
-#   work here. Write initial MEMORY.md Core Memories based on what you learn.
+#   work here. Write initial .herald/MEMORY.md Core Memories based on what you learn.
 #   Introduce yourself with a short message.
 #
 # Documentation audit:
@@ -213,7 +213,7 @@ schedule:
 #   Report a 3-5 bullet summary.
 #
 # Security audit:
-#   !run myproject Read SOUL.md and MEMORY.md. Do a security pass on the codebase:
+#   !run myproject Read .herald/SOUL.md and .herald/MEMORY.md. Do a security pass on the codebase:
 #   check for hardcoded secrets, injection risks (SQL, shell, template), insecure
 #   defaults, overly permissive configs, and dependencies with known CVEs. Use
 #   whatever tools are appropriate for this stack. Write findings to TASKS.md
@@ -221,7 +221,7 @@ schedule:
 #   description for each. Report a summary to Discord.
 #
 # Code health sweep (maintenance / ownership):
-#   !run myproject Read SOUL.md and MEMORY.md. Do a maintenance pass: check for
+#   !run myproject Read .herald/SOUL.md and .herald/MEMORY.md. Do a maintenance pass: check for
 #   outdated dependencies, dead code, documentation drift (README vs. codebase),
 #   and anything that should be a ticket but isn't. Update TASKS.md with anything
 #   you find. If any dependency updates are safe to apply, apply them and commit.

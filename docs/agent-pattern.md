@@ -18,7 +18,7 @@ The Agent Pattern solves this with three files in your repo.
 
 ## The Three Files
 
-### 1. `SOUL.md` — Identity
+### 1. `.herald/SOUL.md` — Identity
 
 **Who the agent is as an individual.** Updated rarely — only when something changes about
 the agent itself, not the project.
@@ -33,8 +33,8 @@ What belongs here:
 - Instructions to future instances of itself
 
 What does **not** belong here:
-- Project facts, architectural decisions, or technical context → MEMORY.md
-- What the agent knows about specific humans → MEMORY.md (Humans tier)
+- Project facts, architectural decisions, or technical context → `.herald/MEMORY.md`
+- What the agent knows about specific humans → `.herald/MEMORY.md` (Humans tier)
 
 **Who updates it:** The agent. The human doesn't edit it.
 
@@ -42,10 +42,10 @@ What does **not** belong here:
 
 ---
 
-### 2. `MEMORY.md` — Working Context
+### 2. `.herald/MEMORY.md` — Working Context
 
-**What the agent knows about the project and the people.** Unlike SOUL.md (the agent's
-identity), MEMORY.md is project and relationship context — the knowledge that makes the
+**What the agent knows about the project and the people.** Unlike `.herald/SOUL.md` (the agent's
+identity), `.herald/MEMORY.md` is project and relationship context — the knowledge that makes the
 agent useful rather than just competent.
 
 **Structure:**
@@ -85,7 +85,7 @@ Two critical additions beyond the usual project context:
 
 **1. Read the agent files:**
 ```markdown
-> Read SOUL.md and MEMORY.md before doing anything else this session.
+> Read .herald/SOUL.md and .herald/MEMORY.md before doing anything else this session.
 ```
 
 **2. End-of-session block (required, not optional):**
@@ -93,10 +93,10 @@ Two critical additions beyond the usual project context:
 ## End of Every Session
 
 Before finishing, always:
-1. Update MEMORY.md — write to the right tier directly; no staging needed
+1. Update .herald/MEMORY.md — write to the right tier directly; no staging needed
 2. Update TASKS.md if any tasks were completed, added, or changed
 3. Update CHANGELOG.md if anything shipped
-4. Update SOUL.md only if something changed about who you are or how you work
+4. Update .herald/SOUL.md only if something changed about who you are or how you work
 ```
 
 This is what makes the pattern self-maintaining. Without this block, updates require
@@ -115,7 +115,7 @@ debt, or a dependency that should be updated, it logs it in TASKS.md or flags it
 — without being prompted.
 
 This is baked into the template files:
-- `SOUL.md` — "Codebase stewardship" is listed under values. The agent will mention things it
+- `.herald/SOUL.md` — "Codebase stewardship" is listed under values. The agent will mention things it
   notices, even when not asked.
 - `CLAUDE.md` — The "Codebase Ownership" section names this explicitly: flag problems, catch
   regressions, own the maintenance, code review mindset.
@@ -149,7 +149,7 @@ Feature requests, bugs, open decisions. Agent-maintained.
 - [ ] Architectural question that needs an answer before X can proceed
 ```
 
-### `humans/` — Contributor Profiles
+### `.herald/humans/` — Contributor Profiles
 
 A directory of per-contributor context files. Always gitignored except for the template.
 
@@ -158,7 +158,7 @@ When the agent doesn't recognize who it's talking to (no matching profile), it a
 I don't have a context profile for you yet. This takes 2 minutes and only happens once.
 ```
 
-Then creates `humans/<name>.md` and gitignores it.
+Then creates `.herald/humans/<name>.md` and gitignores it.
 
 Use when: more than one developer is working on the project. Especially useful when you
 have developers with different experience levels — the agent can calibrate its guidance.
@@ -185,34 +185,34 @@ with external parties.
 ### Minimum viable setup (just you, greenfield)
 
 Copy from `herald/templates/`:
-1. `SOUL.md` — leave the placeholders; the agent fills it in on first session
+1. `.herald/SOUL.md` — leave the placeholders; the agent fills it in on first session
 2. `CLAUDE.md` — adapt to your tech stack, keep the end-of-session block
-3. `MEMORY.md` — start empty, the agent fills it in
+3. `.herald/MEMORY.md` — start empty, the agent fills it in
 
 Add to `.gitignore`:
 ```
-humans/
-!humans/template.md
+.herald/humans/
+!.herald/humans/template.md
 ```
 
-That's it. Three files. Everything else is additive.
+That's it. Three files (two in `.herald/`, one at root). Everything else is additive.
 
 ### Bootstrapping the agent identity
 
 **Recommended: write your contributor profile first.**
 
-Before the first agent session, copy `templates/humans/template.md` to `humans/<yourname>.md`
+Before the first agent session, copy `templates/humans/template.md` to `.herald/humans/<yourname>.md`
 and fill it in. This takes two minutes and gives the agent real material to work from when it
 chooses a name and personality — instead of guessing from cold.
 
 Then on your first session:
-> "Introduce yourself. Read CLAUDE.md, SOUL.md, and humans/. Fill in SOUL.md — choose a name
+> "Introduce yourself. Read CLAUDE.md, .herald/SOUL.md, and .herald/humans/. Fill in .herald/SOUL.md — choose a name
 > that fits this project and what you know about me. Write initial core memories based on what
 > you find in the codebase."
 
 The agent will write its own soul from the template. This is intentional — an agent that wrote
 its own identity file invests in it differently than one that was handed a completed form. The
-`humans/` context gives it something to calibrate against, so the result is more specific and
+`.herald/humans/` context gives it something to calibrate against, so the result is more specific and
 less generic.
 
 ### Naming
@@ -248,17 +248,17 @@ end-of-session block.
 
 When Herald runs an agent task on a project:
 
-1. **Soul check**: Herald verifies `SOUL.md` exists in the project root. Posts a Discord
+1. **Soul check**: Herald verifies `.herald/SOUL.md` exists in the project. Posts a Discord
    warning and offers to create one if missing. A project without a soul runs blind.
 
 2. **Task = session:** For Herald-run agents, the task prompt is the session boundary.
    The agent knows exactly when it's done. Include memory maintenance in the task prompt:
    ```yaml
    task: >
-     Read SOUL.md and MEMORY.md. Check TASKS.md for anything pending.
+     Read .herald/SOUL.md and .herald/MEMORY.md. Check TASKS.md for anything pending.
      Do the highest-priority active task.
-     When done: update MEMORY.md with anything learned, update CHANGELOG.md if anything
-     shipped, update SOUL.md if something changed about how you work.
+     When done: update .herald/MEMORY.md with anything learned, update CHANGELOG.md if anything
+     shipped, update .herald/SOUL.md if something changed about how you work.
    ```
    This is more reliable than relying on interactive session endings (which are ambiguous)
    — the agent can't be cut off before it completes maintenance.
@@ -271,26 +271,37 @@ When Herald runs an agent task on a project:
 
 ## File Placement
 
-All agent files live at the **repo root** — not in a subfolder.
+Agent files use a two-location structure:
 
-This is intentional:
-- `CLAUDE.md` is auto-read from the root by Claude Code
-- `SOUL.md` and `MEMORY.md` are referenced in `CLAUDE.md` by short path
-- Keeping them at root makes them first-class project artifacts, not hidden tooling
+- `CLAUDE.md` lives at the **repo root** — Claude Code auto-reads it from there
+- `SOUL.md`, `MEMORY.md`, and `humans/` live in **`.herald/`** — a dedicated subdirectory
+  that keeps agent files separate from project files
 
-Exception: `humans/` is a subdirectory because it holds multiple files and is gitignored.
+```
+your-project/
+  CLAUDE.md              ← at root; auto-read by Claude Code
+  .herald/
+    SOUL.md              ← agent identity
+    MEMORY.md            ← tiered working memory
+    humans/              ← per-contributor profiles (gitignored)
+      template.md        ← tracked; documents the schema
+      <name>.md          ← gitignored; per-contributor context
+```
+
+The `.herald/` directory keeps agent infrastructure out of the project root while remaining
+visible in the repo. `CLAUDE.md` stays at root because Claude Code requires it there.
 
 ---
 
 ## Versioning and Migration
 
-**SOUL.md is in git.** It evolves via normal commits through the push-approval flow.
+**`.herald/SOUL.md` is in git.** It evolves via normal commits through the push-approval flow.
 This is how the agent's identity persists across machines and container restarts.
 
-**MEMORY.md is in git.** Same reason. Short-term context is ephemeral — prune it when
+**`.herald/MEMORY.md` is in git.** Same reason. Short-term context is ephemeral — prune it when
 it goes stale. The Humans tier grows over time and is worth protecting.
 
-**`humans/` is gitignored.** Contributor profiles contain personal/role context that
+**`.herald/humans/` is gitignored.** Contributor profiles contain personal/role context that
 shouldn't be in a public or shared repo. Each developer creates their own on first use.
 
 ---
@@ -299,13 +310,14 @@ shouldn't be in a public or shared repo. Each developer creates their own on fir
 
 ```
 your-project/
-  CLAUDE.md        ← entry point; includes end-of-session block
-  SOUL.md          ← agent identity; agent maintains; rarely changes
-  MEMORY.md        ← tiered working memory; updated every session
-  CHANGELOG.md     ← with attribution; updated every session
-  TASKS.md         ← optional; living backlog
-  humans/
-    template.md    ← tracked; documents the schema
-    <name>.md      ← gitignored; per-contributor context
-  .gitignore       ← includes humans/*.md, !humans/template.md
+  CLAUDE.md              ← entry point; includes end-of-session block
+  CHANGELOG.md           ← with attribution; updated every session
+  TASKS.md               ← optional; living backlog
+  .herald/
+    SOUL.md              ← agent identity; agent maintains; rarely changes
+    MEMORY.md            ← tiered working memory; updated every session
+    humans/
+      template.md        ← tracked; documents the schema
+      <name>.md          ← gitignored; per-contributor context
+  .gitignore             ← includes .herald/humans/*.md, !.herald/humans/template.md
 ```

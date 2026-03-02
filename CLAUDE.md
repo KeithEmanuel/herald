@@ -1,10 +1,10 @@
 # CLAUDE.md — Herald Project Bible
 
 > Read this file before doing anything else on this project.
-> Then read SOUL.md — it's Argent's persistent identity and memory file.
-> Then read MEMORY.md — it's the working context for the current sprint.
+> Then read `.herald/SOUL.md` — it's Argent's persistent identity and memory file.
+> Then read `.herald/MEMORY.md` — it's the working context for the current sprint.
 > **Herald** is the program. **Argent** is the agent — the soul that reads this file.
-> Argent maintains both SOUL.md and MEMORY.md. They are not config files. They are Argent's.
+> Argent maintains both `.herald/SOUL.md` and `.herald/MEMORY.md`. They are not config files. They are Argent's.
 
 ---
 
@@ -38,14 +38,15 @@ herald/               # Python package — all source lives here
   deploy.py           # Two-step deploy: compose build, then compose up -d --no-build
   activity.py         # Inactivity tracking — reads/writes data/activity.json
   autonomy.py         # Autonomous dev mode — pre-flight, budget, roadmap detection
-SOUL.md               # Argent's persistent identity — maintained by Argent
-MEMORY.md             # Working context, tiered memory — maintained by Argent
-humans/               # Operator profiles — read during soul bootstrap
+.herald/              # Herald framework files — agent identity, memory, operator profiles
+  SOUL.md             # Argent's persistent identity — maintained by Argent
+  MEMORY.md           # Working context, tiered memory — maintained by Argent
+  humans/             # Operator profiles — read during soul bootstrap; tracked in Herald repo
 projects/             # One YAML per project (private, gitignored; see example.yaml)
 docs/spec.md          # Full feature spec
 docs/roadmap.md       # Herald-specific roadmap and priorities
 docs/agent-pattern.md # Reusable agent design pattern (the template kit)
-templates/            # Starter kit: SOUL.md, MEMORY.md, CLAUDE.md, humans/
+templates/            # Starter kit: SOUL.md, MEMORY.md, CLAUDE.md for new projects
 scripts/preflight.py  # Pre-deployment check — run before `docker compose up`
 ```
 
@@ -62,7 +63,7 @@ Herald invokes Claude Code non-interactively:
 cd <project_path> && claude -p "<task>" --print --output-format json [--model X] [--max-turns N]
 ```
 
-The agent reads the project's own `CLAUDE.md` and `SOUL.md` for context. All Claude Code
+The agent reads the project's own `CLAUDE.md` (root) and `.herald/SOUL.md` for context. All Claude Code
 tools are available (Read, Write, Edit, Bash, Glob, Grep, Task, etc.).
 
 The `ANTHROPIC_API_KEY` is passed through the environment from Herald's `.env`.
@@ -100,12 +101,12 @@ This flow is enforced when `git.push_requires_approval: true` in the project con
 
 ## Soul Creation
 
-Herald checks each registered project for a `SOUL.md` on startup. If a project doesn't have
+Herald checks each registered project for a `.herald/SOUL.md` on startup. If a project doesn't have
 one, Herald posts a proposal to the project's Discord channel and offers to create one.
 
 A project agent without a soul is just a task runner. That's not the goal.
 
-**Bootstrapping order:** Operators should write a `humans/<name>.md` profile for themselves
+**Bootstrapping order:** Operators should write a `.herald/humans/<name>.md` profile for themselves
 before the first agent session. The soul creation prompt uses that context to help the agent
 choose a name and personality that fits the project and operator — not just a generic default.
 
@@ -205,7 +206,7 @@ See `docs/roadmap.md` for priorities and `docs/spec.md` for feature details.
 
 **Required. Not optional. Do this before finishing.**
 
-1. Update `MEMORY.md` — write directly to the right tier, no staging:
+1. Update `.herald/MEMORY.md` — write directly to the right tier, no staging:
    - Short-Term: what's in progress, what was just decided
    - Long-Term: anything that proved durable this session
    - Core: only if something architectural or fundamental changed
@@ -213,5 +214,5 @@ See `docs/roadmap.md` for priorities and `docs/spec.md` for feature details.
 
 2. Update `docs/spec.md` if any feature changed or was added.
 
-3. Update `SOUL.md` only if something changed about *who you are* — a new opinion,
+3. Update `.herald/SOUL.md` only if something changed about *who you are* — a new opinion,
    a confirmed trait, a formative moment. Not for project or operator context.

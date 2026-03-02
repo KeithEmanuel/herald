@@ -10,7 +10,7 @@ running automatically.
 
 Herald is a coordinator. You deploy it once and then manage everything through Discord:
 
-- Your agents live in project repos as `SOUL.md` and `MEMORY.md` files
+- Your agents live in project repos as `.herald/SOUL.md` and `.herald/MEMORY.md` files
 - Herald runs them via Claude Code on a schedule or on demand
 - You talk to agents in Discord; they reply as themselves (their own name, their own avatar)
 - Agents commit locally; you approve pushes with a 👍 reaction
@@ -228,7 +228,7 @@ For private repos via HTTPS, include a personal access token in the URL:
 Before the agent's first real session, write a short profile for yourself in the project repo.
 This helps the agent calibrate its personality and working style to you.
 
-Create `humans/yourname.md` in the project repo with a few sentences about:
+Create `.herald/humans/yourname.md` in the project repo with a few sentences about:
 - How you prefer to communicate (brief vs. detailed, direct vs. collaborative)
 - What kind of feedback you want (just do it vs. ask first)
 - Your technical background on this project
@@ -241,20 +241,20 @@ your preferences. It doesn't have to be long — even three sentences is useful.
 
 ## 8. Create the agent's soul
 
-Herald checks for `SOUL.md` in each project repo at startup. If it's missing, it posts a
+Herald checks for `.herald/SOUL.md` in each project repo at startup. If it's missing, it posts a
 proposal in the project's Discord channel offering to create one.
 
 You can also trigger it manually:
 
 ```
 !run myproject You are a new agent on this project. Read CLAUDE.md and explore
-the codebase. Check humans/ for any contributor profiles. Write SOUL.md —
+the codebase. Check .herald/humans/ for any contributor profiles. Write .herald/SOUL.md —
 choose a name and personality that reflects how you'll actually work here.
-Write MEMORY.md Core Memories based on what you discover. Introduce yourself
+Write .herald/MEMORY.md Core Memories based on what you discover. Introduce yourself
 with a short message.
 ```
 
-The agent will explore the repo, pick a name, write `SOUL.md` and `MEMORY.md`, and
+The agent will explore the repo, pick a name, write `.herald/SOUL.md` and `.herald/MEMORY.md`, and
 introduce itself in Discord. Herald will then post a push proposal — react 👍 to commit
 the soul files to the repo.
 
@@ -337,9 +337,9 @@ or change it, look at `projects/myproject.yaml`:
 schedule:
   - cron: "0 8 * * *"
     task: >
-      Read SOUL.md and MEMORY.md. Check recent git log (last 5 commits).
+      Read .herald/SOUL.md and .herald/MEMORY.md. Check recent git log (last 5 commits).
       Write a brief status note: what's in progress, what's blocked, what needs
-      attention today. Update MEMORY.md Short-Term if anything has changed.
+      attention today. Update .herald/MEMORY.md Short-Term if anything has changed.
       Post a 2-3 sentence summary as your response.
 ```
 
@@ -370,7 +370,7 @@ This turns on autonomous mode with a 210-minute (3.5 hour) weekly budget. Before
 anything, Herald runs a pre-flight checklist in Python (no API calls):
 
 - Is autonomous mode enabled?
-- Does the project have `SOUL.md`?
+- Does the project have `.herald/SOUL.md`?
 - Are there unchecked items in the roadmap (`docs/roadmap.md`, `ROADMAP.md`, or `TODO.md`)?
 - Is the weekly budget not exhausted?
 - Has the daily cap not been hit?
@@ -498,9 +498,9 @@ Herald container regardless of its host path.
 
 ## Next steps
 
-- Read `docs/agent-pattern.md` to understand `SOUL.md` and `MEMORY.md` more deeply
+- Read `docs/agent-pattern.md` to understand `.herald/SOUL.md` and `.herald/MEMORY.md` more deeply
 - Read `projects/example.yaml` for the full project config schema with comments
-- Add a `humans/<yourname>.md` to projects before running soul creation — it makes a
+- Add a `.herald/humans/<yourname>.md` to projects before running soul creation — it makes a
   real difference in how well the agent calibrates to you
 - Set up the Caddy sidecar in `compose.yaml` if you want Herald to handle routing for
   project containers — see `caddy/Caddyfile.example`
