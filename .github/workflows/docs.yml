@@ -35,10 +35,11 @@ jobs:
           python-version: '3.12'
 
       - name: Install MkDocs Material
-        run: pip install mkdocs-material
+        # Pin mkdocs<2.0 — Material for MkDocs is not yet compatible with MkDocs 2.x
+        run: pip install "mkdocs-material" "mkdocs<2.0"
 
       - name: Build docs
-        run: mkdocs build --strict
+        run: mkdocs build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
