@@ -6,7 +6,9 @@ channels, and handles the git push-approval flow (👍 / 👎 reactions).
 
 Commands:
   !run <project> <task>                              — trigger a one-off agent run
-  !deploy <project>                                  — build and deploy project container
+  !deploy [project]                                  — build and deploy project container; project inferred from channel if omitted
+  !push [project]                                    — check for unpushed agent branches and propose a push
+  !cancel [project]                                  — cancel next queued (not running) task for a project
   !status                                            — show queue depth and running job
   !projects                                          — list registered projects
   !webhook <project>                                 — create/update agent webhook
@@ -18,6 +20,9 @@ Direct messages:
   Posting a plain message in a project's Discord channel automatically queues a task
   for that project's agent. Results are posted back in the same channel via the agent
   webhook (i.e. as the agent's own identity). No !run needed.
+  File attachments in project channel messages are downloaded and their paths injected
+  into the task prompt so the agent can read them (images, screenshots, text files —
+  anything Claude Code's Read tool supports).
 
 Git approval flow:
   After each agent run, Herald checks for unpushed agent/* branches.
@@ -30,8 +35,10 @@ import asyncio
 import json
 import logging
 import os
+import random
+import shutil
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -39,7 +46,7 @@ import yaml
 import discord
 from discord.ext import commands
 
-from .agent_runner import run_agent, truncate_for_discord
+from .agent_runner import is_error_output, run_agent, split_for_discord, truncate_for_discord
 from .config import ProjectConfig, load_projects
 from .deploy import deploy_project
 from .git_ops import delete_branch, get_unpushed_agent_branches, push_branch
@@ -50,6 +57,31 @@ log = logging.getLogger(__name__)
 
 THUMBS_UP = "👍"
 THUMBS_DOWN = "👎"
+
+# Thinking message pool — shown while an agent task is queued/running.
+# Displayed as italics in the agent's voice before the real response arrives.
+_THINKING_MESSAGES = [
+    "Rallying the peasants...",
+    "Tooting the horns...",
+    "Polishing the armor...",
+    "Consulting the stars...",
+    "Unfurling the banners...",
+    "Sharpening the quills...",
+    "Reading the omens...",
+    "Penning the proclamation...",
+    "Summoning the scribes...",
+    "Lighting the beacon fires...",
+    "Dispatching the messengers...",
+    "Ringing the tower bell...",
+    "Checking the feudal tax records...",
+    "Commissioning the herald...",
+    "Dusting off the grimoire...",
+    "Consulting the oracle...",
+    "Sounding the war drums...",
+    "Updating the royal ledgers...",
+    "Raising the drawbridge...",
+    "Oiling the trebuchet...",
+]
 
 
 class HeraldCommands(commands.Cog, name="Herald"):
@@ -94,12 +126,11 @@ class HeraldCommands(commands.Cog, name="Herald"):
         )
 
         async def on_complete(output: str) -> None:
-            body = truncate_for_discord(output)
-            await self.bot._post_as_agent(
-                project,
-                f"```\n{body}\n```",
-                project_channel,
-            )
+            if is_error_output(output):
+                await project_channel.send(f"⚠️ {truncate_for_discord(output)}")
+            else:
+                for chunk in split_for_discord(output):
+                    await self.bot._post_as_agent(project, chunk, project_channel)
             # After each run, check for unpushed agent branches and propose a push if needed
             await self.bot._check_and_propose_push(project, project_channel)
 
@@ -150,15 +181,28 @@ class HeraldCommands(commands.Cog, name="Herald"):
         await ctx.send("\n".join(lines))
 
     @commands.command(name="deploy")
-    async def cmd_deploy(self, ctx: commands.Context, project: str) -> None:
+    async def cmd_deploy(self, ctx: commands.Context, project: str = None) -> None:
         """
-        !deploy <project>
+        !deploy [project]
 
         Build and deploy the project's Docker container via `docker compose up --build -d`.
         Runs through the serial queue so it won't overlap with an active agent run.
 
+        In a project's own channel, the project name is optional — it's inferred from
+        the channel. Use `!deploy <project>` from any other channel.
+
         Requires deploy.compose_path to be set in the project's YAML config.
         """
+        # Infer project from channel when not explicitly given
+        if project is None:
+            project = self.bot._channel_to_project.get(ctx.channel.id)
+            if project is None:
+                await ctx.send(
+                    "Not a project channel. Use `!deploy <project>` or run this "
+                    "from a project's own channel."
+                )
+                return
+
         if project not in self.bot.projects:
             await ctx.send(
                 f"Unknown project `{project}`. Try `!projects` to see registered projects."
@@ -170,6 +214,17 @@ class HeraldCommands(commands.Cog, name="Herald"):
             await ctx.send(
                 f"`{project}` has no deploy config. "
                 f"Add `deploy.compose_path` to `projects/{project}.yaml`."
+            )
+            return
+
+        # Reject stale commands — Discord replays missed messages when Herald resumes
+        # after a container restart. A self-deploy restarts Herald in ~30s; any command
+        # older than 20s when we receive it was almost certainly replayed, not fresh.
+        age = (discord.utils.utcnow() - ctx.message.created_at).total_seconds()
+        if age > 20:
+            log.info(
+                "Ignoring stale !deploy command for '%s' (age=%.1fs) — replayed after restart",
+                project, age,
             )
             return
 
@@ -187,6 +242,80 @@ class HeraldCommands(commands.Cog, name="Herald"):
                 f"I'll post output when done."
             )
         await self.bot._enqueue_deploy(project, ctx.channel)
+
+    @commands.command(name="push")
+    async def cmd_push(self, ctx: commands.Context, project: str = None) -> None:
+        """
+        !push [project]
+
+        Manually check for unpushed agent branches and post push proposals if any are found.
+        Useful when a proposal didn't appear after a run, or when you've committed manually.
+
+        In a project's own channel, the project name is optional — it's inferred from
+        the channel. Use `!push <project>` from any other channel.
+        """
+        if project is None:
+            project = self.bot._channel_to_project.get(ctx.channel.id)
+            if project is None:
+                await ctx.send(
+                    "Not a project channel. Use `!push <project>` or run this "
+                    "from a project's own channel."
+                )
+                return
+
+        if project not in self.bot.projects:
+            await ctx.send(
+                f"Unknown project `{project}`. Try `!projects` to see registered projects."
+            )
+            return
+
+        project_channel = (
+            self.bot.get_channel(int(self.bot.projects[project].discord_channel_id))
+            or ctx.channel
+        )
+        count = await self.bot._check_and_propose_push(project, project_channel)
+        if count == 0:
+            await ctx.send(f"No unpushed agent branches for `{project}`.")
+
+    @commands.command(name="cancel")
+    async def cmd_cancel(self, ctx: commands.Context, project: str = None) -> None:
+        """
+        !cancel [project]
+
+        Remove the next pending (not currently running) queued task for a project.
+        Does not abort a task that's already executing — use !status to see what's running.
+
+        In a project's own channel, the project name is optional — it's inferred from
+        the channel. Use `!cancel <project>` from any other channel.
+        """
+        if project is None:
+            project = self.bot._channel_to_project.get(ctx.channel.id)
+            if project is None:
+                await ctx.send(
+                    "Not a project channel. Use `!cancel <project>` or run this "
+                    "from a project's own channel."
+                )
+                return
+
+        if project not in self.bot.projects:
+            await ctx.send(
+                f"Unknown project `{project}`. Try `!projects` to see registered projects."
+            )
+            return
+
+        current = self.bot.task_queue.current
+        if current and current.project_name == project:
+            await ctx.send(
+                f"`{project}` is currently running — `!cancel` only removes pending tasks, "
+                f"not in-progress ones. Use `!status` to see what's running."
+            )
+            return
+
+        cancelled = self.bot.task_queue.cancel(project)
+        if cancelled:
+            await ctx.send(f"Cancelled next queued task for `{project}`.")
+        else:
+            await ctx.send(f"No queued tasks for `{project}`.")
 
     @commands.command(name="webhook")
     async def cmd_webhook(self, ctx: commands.Context, project: str) -> None:
@@ -269,10 +398,39 @@ class HeraldCommands(commands.Cog, name="Herald"):
             return
 
         task_text = message.content.strip()
-        if not task_text:
+        if not task_text and not message.attachments:
+            return
+
+        # Reject messages that are too old — they may be replayed by Discord after a
+        # container restart resumes the gateway session. Skip anything > 20s old so
+        # a normal restart cycle (~30s) doesn't re-process the message that triggered it.
+        age = (discord.utils.utcnow() - message.created_at).total_seconds()
+        if age > 20:
+            log.debug(
+                "Ignoring stale message in #%s (age=%.1fs) — possible replay after restart",
+                message.channel.name, age,
+            )
             return
 
         channel = message.channel
+
+        # Download any file attachments to a temp dir so the agent can read them.
+        # Paths are injected into the task prompt; cleanup runs in on_complete (try/finally).
+        attachment_paths: list[str] = []
+        attachment_dir: Path | None = None
+        if message.attachments:
+            attachment_dir = Path(f"/tmp/herald-attachments/{channel.id}-{message.id}")
+            attachment_dir.mkdir(parents=True, exist_ok=True)
+            for att in message.attachments:
+                dest = attachment_dir / att.filename
+                try:
+                    await att.save(dest)
+                    attachment_paths.append(str(dest))
+                    log.info("Saved attachment '%s' for %s", att.filename, project_name)
+                except Exception:
+                    log.warning(
+                        "Failed to download attachment '%s'", att.filename, exc_info=True
+                    )
 
         # Fetch recent channel history so the agent has conversation context.
         # This is what lets the agent understand short replies like "yes" or "actually,
@@ -297,35 +455,64 @@ class HeraldCommands(commands.Cog, name="Herald"):
                 f"[Recent conversation in #{channel.name}:]\n"
                 f"{context_block}\n\n"
                 f"[New message from {message.author.display_name}:]\n"
-                f"{task_text}"
+                f"{task_text or '[attachment only — no text]'}"
             )
         else:
-            full_task = task_text
+            full_task = task_text or "[attachment only — no text]"
+
+        if attachment_paths:
+            paths_str = "\n".join(f"- {p}" for p in attachment_paths)
+            full_task += f"\n\nAttached files (use the Read tool to view them):\n{paths_str}"
 
         # Post a "thinking" placeholder as the agent identity. We capture the returned
         # message so on_complete can edit it in-place — the placeholder transforms into
         # the actual response rather than posting a separate follow-up message.
         queue_pos = self.bot.task_queue.depth + 1
+        thinking_phrase = random.choice(_THINKING_MESSAGES)
         thinking_msg = await self.bot._post_as_agent(
             project_name,
-            f"_Working on it..._ (queue position {queue_pos})",
+            f"_{thinking_phrase}_ (queue position {queue_pos})",
             channel,
         )
 
         async def on_complete(output: str) -> None:
-            body = truncate_for_discord(output)
-            response = f"```\n{body}\n```"
-            if thinking_msg is not None:
-                try:
-                    await thinking_msg.edit(content=response)
-                    await self.bot._check_and_propose_push(project_name, channel)
+            try:
+                # Infrastructure errors (non-zero exit, timeout, missing binary) come from
+                # Herald bot, not the agent webhook — they're Herald's problem, not the agent's.
+                # Delete the thinking placeholder and post the error as the Herald bot.
+                if is_error_output(output):
+                    if thinking_msg is not None:
+                        try:
+                            await thinking_msg.delete()
+                        except Exception:
+                            pass
+                    await channel.send(f"⚠️ {truncate_for_discord(output)}")
                     return
-                except Exception:
-                    log.warning(
-                        "Could not edit thinking message for %s — posting fresh", project_name
-                    )
-            await self.bot._post_as_agent(project_name, response, channel)
-            await self.bot._check_and_propose_push(project_name, channel)
+
+                # Successful agent output: split into chunks so long responses arrive as
+                # multiple messages instead of being truncated. Edit the thinking placeholder
+                # in-place with the first chunk, then post the rest as follow-up messages.
+                chunks = split_for_discord(output)
+                if thinking_msg is not None:
+                    try:
+                        await thinking_msg.edit(content=chunks[0])
+                        for chunk in chunks[1:]:
+                            await self.bot._post_as_agent(project_name, chunk, channel)
+                        await self.bot._check_and_propose_push(project_name, channel)
+                        return
+                    except Exception:
+                        log.warning(
+                            "Could not edit thinking message for %s — posting fresh", project_name
+                        )
+                for chunk in chunks:
+                    await self.bot._post_as_agent(project_name, chunk, channel)
+                await self.bot._check_and_propose_push(project_name, channel)
+            finally:
+                # Clean up downloaded attachment files once the agent run completes,
+                # whether it succeeded, failed, or raised. /tmp lives in the container
+                # so this is belt-and-suspenders; a restart would clean it anyway.
+                if attachment_dir is not None:
+                    await asyncio.to_thread(shutil.rmtree, attachment_dir, ignore_errors=True)
 
         proj_cfg = self.bot.projects[project_name]
         self.bot.task_queue.enqueue(AgentTask(
@@ -810,11 +997,22 @@ class HeraldCommands(commands.Cog, name="Herald"):
         self.bot._channel_to_project[channel.id] = name
         log.info("Project '%s' added via !addproject, active immediately", name)
 
+        # --- Step 6: Scaffold Herald framework files if missing ---
+        scaffolded = await self.bot._scaffold_project_files(repo_path, display_name)
+        if scaffolded:
+            await ctx.send(
+                f"Scaffolded: {', '.join(scaffolded)} — template placeholders will be "
+                f"filled in during the soul bootstrap."
+            )
+
         await ctx.send(
             f"**`{name}` is ready.** Daily morning check-in scheduled at 8am.\n"
             f"Talk to the agent by posting in {channel.mention}, or use `!run {name} <task>`.\n"
             f"To change the schedule: `!schedule {name} <cron>` or edit the YAML and `!reload`."
         )
+
+        # --- Step 7: Bootstrap soul if missing (don't wait for next restart) ---
+        await self.bot._maybe_bootstrap_soul(name, self.bot.projects[name], channel)
 
 
 class HeraldBot(commands.Bot):
@@ -923,62 +1121,122 @@ class HeraldBot(commands.Bot):
         # Check that each project has a SOUL.md — a project without a soul is just files.
         await self._check_project_souls()
 
+    async def _scaffold_project_files(self, repo_path: Path, display_name: str) -> list[str]:
+        """
+        Copy Herald framework template files into a project repo if they don't exist.
+
+        Creates CLAUDE.md and MEMORY.md from templates/, and creates the humans/ directory
+        so the operator has a clear place to drop their profile. Only touches files that
+        are missing — existing files are never overwritten.
+
+        Commits any newly created files to the repo so they persist.
+        Returns a list of file paths that were scaffolded.
+        """
+        templates_dir = Path(__file__).parent.parent / "templates"
+        scaffolded: list[str] = []
+
+        for filename in ("CLAUDE.md", "MEMORY.md"):
+            dest = repo_path / filename
+            if not dest.exists():
+                template_path = templates_dir / filename
+                if template_path.exists():
+                    content = template_path.read_text().replace("[Project Name]", display_name)
+                    dest.write_text(content)
+                    scaffolded.append(filename)
+
+        # Create humans/ with .gitkeep so the operator sees a clear place for profiles
+        humans_dir = repo_path / "humans"
+        if not humans_dir.exists():
+            humans_dir.mkdir()
+            (humans_dir / ".gitkeep").touch()
+            scaffolded.append("humans/.gitkeep")
+
+        if scaffolded:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "add", *scaffolded,
+                    cwd=repo_path,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await proc.wait()
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "commit", "-m",
+                    "chore: scaffold Herald agent framework files\n\n"
+                    "Added by !addproject: CLAUDE.md template, MEMORY.md template, humans/",
+                    cwd=repo_path,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await proc.wait()
+            except Exception as e:
+                log.warning("Scaffold commit failed for '%s': %s", repo_path.name, e)
+
+        return scaffolded
+
+    async def _maybe_bootstrap_soul(
+        self, name: str, project, channel: discord.TextChannel | None
+    ) -> None:
+        """
+        If a project is missing SOUL.md, post a notice and queue a bootstrap run.
+
+        Called both at startup (for all projects) and immediately after !addproject
+        (for the newly registered project). A project without a soul gets generic
+        output — the bootstrap gives it an identity, memory, and an introduction.
+        """
+        soul_path = Path(project.path) / "SOUL.md"
+        if soul_path.exists():
+            return
+
+        if channel:
+            await channel.send(
+                f"👻 **`{name}` has no SOUL.md.** "
+                f"Bootstrapping agent soul — I'll introduce myself when ready."
+            )
+        log.warning("Project '%s' missing SOUL.md — queuing bootstrap run", name)
+
+        bootstrap_task = (
+            "You are a new agent on this project. This is your first run. "
+            "Do the following:\n"
+            "1. Read CLAUDE.md — it's your project instructions. Fill in any template "
+            "placeholders ([...]) with real information based on what you find in the repo.\n"
+            "2. Look in the humans/ directory for any operator profiles — "
+            "they tell you how this person works and what they care about.\n"
+            "3. Briefly explore the codebase (README, main source files, "
+            "package files, any existing docs).\n"
+            "4. Write SOUL.md. Choose a name that fits this project and what "
+            "you've learned about the people here. Write your role, your values, "
+            "and a personality that reflects how you'll actually work here. "
+            "Heraldic tincture names (Argent, Or, Sable...) are one option — "
+            "pick whatever fits.\n"
+            "5. Update MEMORY.md Core Memories with what you learned about the "
+            "architecture and key decisions. The template sections are already there.\n"
+            "6. Post a short introduction: your name, your read on the project, "
+            "and what you're here to do. 2-3 sentences. No fluff."
+        )
+
+        def make_on_complete(proj_name: str, proj_channel):
+            async def on_complete(output: str) -> None:
+                chunks = split_for_discord(output)
+                for chunk in chunks:
+                    await self._post_as_agent(proj_name, chunk, proj_channel)
+            return on_complete
+
+        self.task_queue.enqueue(AgentTask(
+            project_name=name,
+            task=bootstrap_task,
+            on_complete=make_on_complete(name, channel),
+            label=f"[soul bootstrap] {name}",
+            record_activity=False,
+        ))
+
     async def _check_project_souls(self) -> None:
         """
-        On startup, check each project for a SOUL.md file.
-
-        If a project is missing one, post a notice to its Discord channel and enqueue a
-        bootstrapping agent run to write one automatically. A project without a soul starts
-        each run with no identity or memory — the bootstrap makes it a real agent immediately.
+        On startup, check each project for a SOUL.md file and bootstrap any that are missing.
         """
         for name, project in self.projects.items():
-            soul_path = Path(project.path) / "SOUL.md"
-            if not soul_path.exists():
-                channel = self.get_channel(int(project.discord_channel_id))
-                if channel:
-                    await channel.send(
-                        f"👻 **`{name}` has no SOUL.md.** "
-                        f"Bootstrapping agent soul — I'll introduce myself when ready."
-                    )
-                log.warning(
-                    "Project '%s' missing SOUL.md — queuing bootstrap run", name
-                )
-
-                bootstrap_task = (
-                    "You are a new agent on this project. This is your first run. "
-                    "Do the following:\n"
-                    "1. Read CLAUDE.md if it exists.\n"
-                    "2. Look in the humans/ directory for any operator profiles — "
-                    "they tell you how this person works and what they care about.\n"
-                    "3. Briefly explore the codebase (README, main source files, "
-                    "package files, any existing docs).\n"
-                    "4. Write SOUL.md. Choose a name that fits this project and what "
-                    "you've learned about the people here. Write your role, your values, "
-                    "and a personality that reflects how you'll actually work here. "
-                    "Heraldic tincture names (Argent, Or, Sable...) are one option — "
-                    "pick whatever fits.\n"
-                    "5. Write initial MEMORY.md with Core Memories based on what you "
-                    "learned about the architecture and key decisions.\n"
-                    "6. Post a short introduction: your name, your read on the project, "
-                    "and what you're here to do. 2-3 sentences. No fluff."
-                )
-
-                # Capture loop variable so the closure captures the right values
-                def make_on_complete(proj_name: str, proj_channel):
-                    async def on_complete(output: str) -> None:
-                        body = truncate_for_discord(output)
-                        await self._post_as_agent(
-                            proj_name, f"```\n{body}\n```", proj_channel
-                        )
-                    return on_complete
-
-                self.task_queue.enqueue(AgentTask(
-                    project_name=name,
-                    task=bootstrap_task,
-                    on_complete=make_on_complete(name, channel),
-                    label=f"[soul bootstrap] {name}",
-                    record_activity=False,
-                ))
+            channel = self.get_channel(int(project.discord_channel_id))
+            await self._maybe_bootstrap_soul(name, project, channel)
 
     # -------------------------------------------------------------------------
     # Git push-approval flow
@@ -986,14 +1244,15 @@ class HeraldBot(commands.Bot):
 
     async def _check_and_propose_push(
         self, project_name: str, channel: discord.TextChannel
-    ) -> None:
+    ) -> int:
         """
         After an agent run, check for unpushed agent/* branches.
         If found, post a push proposal and await the operator's reaction.
+        Returns the number of proposals posted (0 if no unpushed branches).
         """
         project = self.projects[project_name]
         if not project.git.push_requires_approval:
-            return
+            return 0
 
         # Run sync git ops in a thread pool — they use blocking subprocess and would
         # stall the event loop if called directly from async context.
@@ -1005,18 +1264,26 @@ class HeraldBot(commands.Bot):
             branch = item["branch"]
             commits = item["commits"]
             n = len(commits)
-            commit_list = "\n".join(f"  • {c}" for c in commits[:10])
+            commit_lines = "\n".join(f"• {c}" for c in commits[:10])
             if n > 10:
-                commit_list += f"\n  … and {n - 10} more"
+                commit_lines += f"\n… and {n - 10} more"
 
-            msg_text = (
-                f"**Push proposal** `[{project_name}]`\n"
-                f"Branch: `{branch}` — {n} commit(s)\n"
-                f"```\n{commit_list}\n```\n"
-                f"React {THUMBS_UP} to push or {THUMBS_DOWN} to discard."
+            embed = discord.Embed(
+                title="Push Proposal",
+                color=discord.Color.yellow(),
+                timestamp=datetime.now(timezone.utc),
             )
+            embed.add_field(name="Project", value=f"`{project_name}`", inline=True)
+            embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
+            embed.add_field(name="Commits", value=str(n), inline=True)
+            embed.add_field(
+                name="Changes",
+                value=f"```\n{commit_lines}\n```",
+                inline=False,
+            )
+            embed.set_footer(text=f"{THUMBS_UP} approve  •  {THUMBS_DOWN} discard")
 
-            msg = await channel.send(msg_text)
+            msg = await channel.send(embed=embed)
             await msg.add_reaction(THUMBS_UP)
             await msg.add_reaction(THUMBS_DOWN)
 
@@ -1029,6 +1296,8 @@ class HeraldBot(commands.Bot):
                 "Push proposal posted for %s branch %s (message %d)",
                 project_name, branch, msg.id,
             )
+
+        return len(unpushed)
 
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
         """
@@ -1071,16 +1340,44 @@ class HeraldBot(commands.Bot):
         if emoji == THUMBS_UP:
             success, message = await asyncio.to_thread(push_branch, project.path, branch)
             if success:
-                await channel.send(f"Pushed `{branch}` to origin. {message}")
+                embed = discord.Embed(
+                    title="Pushed",
+                    description=f"`{branch}` → origin",
+                    color=discord.Color.green(),
+                    timestamp=datetime.now(timezone.utc),
+                )
+                embed.add_field(name="Project", value=f"`{project_name}`", inline=True)
+                if message:
+                    embed.add_field(name="Details", value=message, inline=False)
+                await channel.send(embed=embed)
                 # Auto-deploy if the project is configured for it
                 if project.deploy.auto_deploy_on_push and project.deploy.compose_path:
                     await channel.send(f"Auto-deploying `{project_name}`...")
                     await self._enqueue_deploy(project_name, channel)
             else:
-                await channel.send(f"Push failed for `{branch}`:\n```\n{message}\n```")
+                embed = discord.Embed(
+                    title="Push Failed",
+                    description=f"`{branch}`",
+                    color=discord.Color.red(),
+                    timestamp=datetime.now(timezone.utc),
+                )
+                embed.add_field(name="Project", value=f"`{project_name}`", inline=True)
+                embed.add_field(
+                    name="Error",
+                    value=f"```\n{message}\n```" if message else "Unknown error",
+                    inline=False,
+                )
+                await channel.send(embed=embed)
         else:
             success, message = await asyncio.to_thread(delete_branch, project.path, branch)
-            await channel.send(message)
+            embed = discord.Embed(
+                title="Branch Discarded",
+                description=f"`{branch}` deleted",
+                color=discord.Color.dark_grey(),
+                timestamp=datetime.now(timezone.utc),
+            )
+            embed.add_field(name="Project", value=f"`{project_name}`", inline=True)
+            await channel.send(embed=embed)
 
     # -------------------------------------------------------------------------
     # Helpers
@@ -1131,8 +1428,26 @@ class HeraldBot(commands.Bot):
             return await deploy_project(compose_path)
 
         async def on_complete(output: str) -> None:
-            body = truncate_for_discord(output)
-            await channel.send(f"**Deploy complete** `[{project_name}]`\n```\n{body}\n```")
+            # Herald self-deploy kills the container mid-run — any output we capture is
+            # unreliable (usually a spurious "exit code 1" from the killed process). The
+            # "I'll go quiet while I restart" ack already sets the right expectation.
+            if project_name == "herald":
+                return
+            # Build output is long; errors appear at the end. Show the tail.
+            body = truncate_for_discord(output, from_end=True)
+            failed = is_error_output(output)
+            embed = discord.Embed(
+                title="Deploy Failed" if failed else "Deploy Complete",
+                description=f"`{project_name}`",
+                color=discord.Color.red() if failed else discord.Color.green(),
+                timestamp=datetime.now(timezone.utc),
+            )
+            embed.add_field(
+                name="Output",
+                value=f"```\n{body}\n```",
+                inline=False,
+            )
+            await channel.send(embed=embed)
 
         self.task_queue.enqueue(AgentTask(
             project_name=project_name,

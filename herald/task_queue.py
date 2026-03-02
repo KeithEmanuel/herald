@@ -86,6 +86,35 @@ class TaskQueue:
         self._queue.put_nowait(task)
         log.info("Task enqueued: [%s] %s (queue depth: %d)", task.project_name, task.label, self.depth)
 
+    def cancel(self, project_name: str) -> bool:
+        """
+        Remove the first pending task for project_name from the queue.
+
+        Does NOT cancel the currently-running task — only tasks waiting in the queue.
+        Returns True if a task was found and removed, False if none was waiting.
+
+        Implementation: asyncio.Queue doesn't support selective removal, so we drain
+        the queue, skip the first match, and re-enqueue the rest. This is safe because
+        enqueue() and cancel() both run on the event loop thread — no concurrent access.
+        """
+        items: list[AgentTask] = []
+        while not self._queue.empty():
+            try:
+                items.append(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+
+        cancelled = False
+        for item in items:
+            if not cancelled and item.project_name == project_name:
+                # Skip this task — it's the one being cancelled
+                cancelled = True
+                log.info("Task cancelled: [%s] %s", item.project_name, item.label)
+            else:
+                self._queue.put_nowait(item)
+
+        return cancelled
+
     @property
     def depth(self) -> int:
         """Number of tasks waiting (not counting the currently running one)."""

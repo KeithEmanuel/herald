@@ -35,7 +35,7 @@ herald/               # Python package — all source lives here
   scheduler.py        # APScheduler — fires cron tasks per project into the queue
   config.py           # Pydantic config loader — validates projects/*.yaml
   git_ops.py          # git push/discard for the approval flow
-  deploy.py           # docker compose up --build -d for project containers
+  deploy.py           # Two-step deploy: compose build, then compose up -d --no-build
   activity.py         # Inactivity tracking — reads/writes data/activity.json
   autonomy.py         # Autonomous dev mode — pre-flight, budget, roadmap detection
 SOUL.md               # Argent's persistent identity — maintained by Argent
@@ -59,13 +59,22 @@ Never break this — it's what prevents rate limit collisions and keeps cost pre
 Herald invokes Claude Code non-interactively:
 
 ```bash
-cd <project_path> && claude -p "<task>" --print
+cd <project_path> && claude -p "<task>" --print --output-format json [--model X] [--max-turns N]
 ```
 
 The agent reads the project's own `CLAUDE.md` and `SOUL.md` for context. All Claude Code
 tools are available (Read, Write, Edit, Bash, Glob, Grep, Task, etc.).
 
 The `ANTHROPIC_API_KEY` is passed through the environment from Herald's `.env`.
+
+**Permissions:** Tool use is granted via `{"permissions": {"allow": ["Bash(*)", "Write(*)", ...]}}` in
+`/root/.claude/settings.json`, seeded by `docker-entrypoint.sh` on every container startup. The
+`--dangerously-skip-permissions` CLI flag is intentionally NOT used — Claude Code blocks it for
+root users. The settings.json approach is equivalent and isn't root-restricted.
+
+**Output format:** `--output-format json` gives structured output with actual token counts.
+`run_agent()` returns `(text, total_tokens)`. Bot commands and autonomy budget tracking both
+use the token count.
 
 ---
 
@@ -158,13 +167,35 @@ in Herald's own development now.
 
 ---
 
+## Container Runtime Notes
+
+Herald runs `docker compose up --build -d` from **inside the Herald container** to deploy
+project containers. The Docker CLI is installed in the image and talks to the container
+runtime socket mounted at `/var/run/docker.sock`.
+
+`HERALD_COMPOSE_CMD` in `.env` controls the compose command (default: `docker compose`).
+**Do not set this to `podman compose`** — `podman` is not installed in the Herald image.
+When running Herald under Podman rootless, the Podman socket is mounted at
+`/var/run/docker.sock` inside the container, so the Docker CLI drives Podman via its
+Docker-compatible API.
+
+**Self-deploy:** `!deploy herald` rebuilds and restarts Herald itself. `deploy.py` runs in
+two steps: (1) `compose build` — builds the new image while Herald is still alive; (2)
+`compose up -d --no-build` — stops Herald and creates the new container, but Herald's process
+is killed before the new container can start. No completion message will arrive — that's
+expected. The host-side watchdog (`watchdog.sh` managed by systemd) detects Herald is down and
+runs `podman compose up -d`, which picks up the freshly built image and starts it.
+
+**Watchdog:** `$HERALD_ROOT/watchdog.sh` polls every 15 seconds. If no herald container is
+running, it runs `podman compose up -d`. Managed by `~/.config/systemd/user/herald-watchdog.service`.
+Both the watchdog script and the service template (`herald-watchdog.service`) live in the repo root.
+
 ## Current Status
 
-Core is built and functional: bot, serial queue, scheduler, git push-approval flow,
-activity tracking, accountability checker, SOUL.md soul check on startup.
-
-Still ahead: Discord embed formatting (currently plain text), soul creation flow
-(currently warns on missing SOUL.md; needs to actually generate one), formal test suite.
+Core fully functional: bot, serial queue, scheduler, git push-approval flow, activity tracking,
+accountability checker, autonomous development mode (pre-flight + budget + roadmap detection),
+per-agent Discord identity (webhooks), `!addproject` onboarding, hot-reload, file attachments
+in project channels, `!push` / `!cancel` commands. 70+ tests passing.
 
 See `docs/roadmap.md` for priorities and `docs/spec.md` for feature details.
 

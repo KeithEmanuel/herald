@@ -108,11 +108,24 @@ Template: `caddy/Caddyfile.example` in the repo.
 - `HERALD_DOCKER_SOCKET` env var (default: `/var/run/docker.sock`)
 - Always mounted at `/var/run/docker.sock` inside the container
 - Docker CLI in the image works with Podman's Docker-compatible API transparently
+- `HERALD_COMPOSE_CMD` must be `docker compose` (NOT `podman compose`) — `podman` is not
+  installed inside the container; the Docker CLI talks to Podman via the mounted socket
+
+**Self-deploy architecture (`!deploy herald`):**
+- `deploy.py` splits into two steps: `compose build` (Herald alive) → `compose up -d --no-build` (kills Herald)
+- The new container is created but not started before Herald dies
+- Host-side watchdog (`watchdog.sh` + systemd user service `herald-watchdog.service`) detects
+  Herald is down and runs `podman compose up -d` which picks up the new image and starts it
+- `watchdog.sh` is at `HERALD_ROOT/watchdog.sh`; service template in repo root
+- No completion Discord message after `!deploy herald` — expected behavior
 
 **Named volumes (Herald's own compose):**
 - `herald_data` → `/app/data` (activity logs, runtime state) — MUST be named
-- `herald_claude_memory` → `/root/.claude` (agent auto-memory)
-- `herald_claude_config` → `/root/.config/claude` (Claude Code auth)
+- `herald_claude_memory` → `/root/.claude` (agent auto-memory + settings.json)
+
+**Bind mounts (not named volumes):**
+- `${HERALD_ROOT}/claude-auth.json` → `/root/.claude.json` — Claude Code OAuth auth
+- `${HERALD_DOCKER_SOCKET}` → `/var/run/docker.sock` — container runtime socket
 
 **Discord identity design:** Per-agent Discord identity via webhooks — not multiple bot
 accounts. Single Herald bot token handles receiving commands. Per-project webhooks handle
@@ -138,9 +151,9 @@ projects: SOUL.md, MEMORY.md, CLAUDE.md. `blog/` — agent-written posts for Git
 
 *Current sprint context. Roll up to long-term after ~2 weeks or phase end.*
 
-**Status (2026-03-01):** Core built and functional. Autonomous development mode implemented
-and tested (54/54 tests passing). Repo is at /mnt/lvm-nvme/herald/repos/herald/ — all
-changes on server, not yet committed or pushed.
+**Status (2026-03-02):** Core built and functional. All Phase 1.5 features complete.
+70/70 tests passing. Repo at /mnt/lvm-nvme/herald/repos/herald/. Watchdog active on host.
+Changes not yet committed.
 
 **Changes this session (2026-02-28, second session):**
 - HERALD_ROOT consolidation: replaced HERALD_REPOS_ROOT + HERALD_DEPLOYMENTS_DIR with single var
@@ -176,6 +189,18 @@ command + Herald managing itself (`projects/herald.yaml`). Priority before first
   5 new tests in `tests/test_config.py`, 1 new test in `tests/test_queue.py`
 - Key design: autonomous runs use `record_activity=False` (accountability clock stays honest);
   budget in wall-clock minutes/week; 7-check pre-flight (all local, no API calls)
+
+**Changes this session (2026-03-02):**
+- Silly Herald-themed thinking messages: 20-item pool (`_THINKING_MESSAGES`), randomly selected,
+  replaces the static "Working on it..." placeholder in agent channel conversational flow
+- `split_for_discord()` added to `agent_runner.py`: splits long output at paragraph/line breaks
+  instead of truncating — long agent responses now arrive as multiple Discord messages
+- `on_message` and `cmd_run` `on_complete` updated to use `split_for_discord` (no more truncation)
+- `TaskQueue.cancel(project_name)` added: removes first pending task for a project by drain+re-enqueue
+- `!push [project]` command: manually trigger push proposal check; infers project from channel;
+  reports "no unpushed branches" if nothing found; `_check_and_propose_push` now returns int count
+- `!cancel [project]` command: cancel next queued (not running) task; warns if task is in-progress;
+  infers project from channel; both commands follow the same channel-aware pattern as `!deploy`
 
 **Changes this session (2026-03-01, third session):**
 - `--dangerously-skip-permissions` added to agent_runner (was missing — bug; agents could hang)

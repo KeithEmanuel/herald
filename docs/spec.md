@@ -146,12 +146,15 @@ deploy:
 | Command | Description |
 |---|---|
 | `!run <project> <task>` | Trigger a one-off agent run (posts result to project channel) |
-| `!deploy <project>` | Deploy the project's Docker container |
+| `!deploy [project]` | Deploy the project's Docker container (inferred from channel if omitted) |
+| `!push [project]` | Check for unpushed agent branches and propose a push |
+| `!cancel [project]` | Cancel the next queued (not running) task for a project |
 | `!status` | Show queue depth and currently running job |
 | `!projects` | List registered projects and their channel |
 | `!addproject <name> <repo_url> [agent_name] [#channel]` | Register a new project end-to-end |
 | `!webhook <project>` | Create/update the agent's Discord webhook (attach image for avatar) |
 | `!schedule <project> <cron>` | Set/update the project's cron schedule (e.g. `0 8 * * *`) |
+| `!autonomy <project> <on\|off\|status\|budget\|reserve>` | Manage autonomous development mode |
 | `!reload` | Hot-reload all project YAMLs and restart the scheduler |
 
 **Direct messages:** Posting a plain (non-`!`) message in a project's Discord channel
@@ -335,9 +338,15 @@ cd <project_path> && claude -p "<task>" --print
 Claude Code reads the project's `CLAUDE.md` for context (which references `SOUL.md` and
 `MEMORY.md`). All Claude Code tools (Read, Write, Edit, Bash, Glob, Grep, Task) are available.
 
-**Authentication:** Subscription auth via `~/.claude/` (OAuth, not API key). Credentials
-persist via the `herald_claude_config` Docker named volume. Authenticate once interactively
-inside the container; all subsequent runs use the stored credentials.
+**Authentication:** Subscription auth via `~/.claude.json` (OAuth, not API key). Credentials
+are stored at `${HERALD_ROOT}/claude-auth.json` on the host, bind-mounted into the container
+at `/root/.claude.json`. Authenticate once interactively (`podman compose exec herald claude`);
+credentials persist across restarts and rebuilds via the bind mount — no named volume needed.
+
+**Permissions:** Tool use (Write, Edit, Bash, etc.) is permitted via `permissions.allow` in
+`/root/.claude/settings.json`, written by `docker-entrypoint.sh` on every container startup.
+The `--dangerously-skip-permissions` CLI flag is NOT used — the Claude Code CLI blocks it for
+root users. The settings.json approach is equivalent and isn't root-restricted.
 
 Requires Node.js + Claude Code CLI in the Herald Docker image.
 
@@ -365,14 +374,20 @@ HERALD_ROOT/                # e.g. /srv/herald — set in .env
 using the template in `repos/herald/compose.yaml`. It points `build: context: ./repos/herald`
 so Docker builds the Herald image from the cloned source.
 
-**Container runtime socket:** Herald bind-mounts the container runtime socket to run
-`docker compose up --build -d` for project containers. The Docker CLI client in the Herald
-image works with both Docker and Podman (Podman provides a Docker-compatible API).
+**Container runtime socket:** Herald bind-mounts the container runtime socket so it can run
+`docker compose up --build -d` for project containers. The Docker CLI installed in the Herald
+image works with both Docker and Podman (Podman exposes a Docker-compatible API).
 
 - **Docker (default):** `/var/run/docker.sock` — root daemon, full host Docker access
 - **Podman rootless (recommended for public repos):** set `HERALD_DOCKER_SOCKET` in `.env`
   to `/run/user/<uid>/podman/podman.sock`. Requires `podman system service` running as a
   dedicated `herald` user. Container escapes are limited to user-level access, not root.
+
+**`HERALD_COMPOSE_CMD`:** Controls which compose command Herald uses for `!deploy` (default:
+`docker compose`). Do **not** set this to `podman compose` — `podman` is not installed in the
+Herald container image. The Docker CLI inside the container talks to the Podman socket at
+`/var/run/docker.sock` via Podman's Docker-compatible API. `docker compose` is correct for both
+Docker and Podman rootless setups.
 
   Host setup for Podman rootless:
   ```bash
@@ -392,8 +407,12 @@ Caddy routing is configured manually per project (not automated by Herald).
 
 **Named volumes:**
 - `herald_data` → `/app/data` — activity logs, webhook URLs, runtime state
-- `herald_claude_config` → `/root/.config/claude` — Claude Code auth (subscription OAuth)
-- `herald_claude_memory` → `/root/.claude` — Claude Code auto-memory
+- `herald_claude_memory` → `/root/.claude` — Claude Code auto-memory and settings.json
+
+**Bind mounts (not named volumes):**
+- `${HERALD_ROOT}/claude-auth.json` → `/root/.claude.json` — Claude Code auth (subscription OAuth).
+  Created on first `claude` login inside the container. Persists across rebuilds.
+- `${HERALD_DOCKER_SOCKET}` → `/var/run/docker.sock` — container runtime socket
 
 ---
 

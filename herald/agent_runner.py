@@ -2,11 +2,13 @@
 agent_runner.py — Wraps the Claude Code CLI for non-interactive agent runs.
 
 Invokes:
-  cd <project_path> && claude -p "<task>" --print --dangerously-skip-permissions \
-      --output-format json [--model <model>] [--max-turns <n>]
+  cd <project_path> && claude -p "<task>" --print --output-format json \
+      [--model <model>] [--max-turns <n>]
 
---dangerously-skip-permissions is required for non-interactive runs. Without it,
-Claude Code will pause at permission prompts and hang indefinitely.
+Permission prompts are suppressed via {"dangerouslySkipPermissions": true} in
+/root/.claude/settings.json (seeded by docker-entrypoint.sh). The equivalent
+--dangerously-skip-permissions CLI flag is intentionally NOT used because Claude
+Code blocks it when running as root/sudo.
 
 --output-format json gives us structured output including actual token counts
 (input + output tokens from the Anthropic API). The CLI outputs newline-delimited
@@ -95,7 +97,10 @@ async def run_agent(
         CLAUDE_BIN,
         "-p", task,
         "--print",
-        "--dangerously-skip-permissions",   # required for non-interactive runs
+        # --dangerously-skip-permissions is NOT passed as a CLI flag because Claude Code
+        # blocks it when running as root. Instead, settings.json (seeded by the
+        # docker-entrypoint.sh) contains {"dangerouslySkipPermissions": true}, which
+        # is honoured without the root restriction.
         "--output-format", "json",           # structured output with token counts
     ]
     if model:
@@ -146,16 +151,62 @@ async def run_agent(
         return f"[ERROR] Unexpected exception running agent: {type(e).__name__}: {e}", 0
 
 
-def truncate_for_discord(text: str, max_chars: int = DISCORD_MAX_CHARS) -> str:
+def truncate_for_discord(
+    text: str,
+    max_chars: int = DISCORD_MAX_CHARS,
+    from_end: bool = False,
+) -> str:
     """
     Truncate text to fit Discord's 2000-char message limit.
 
-    Appends a truncation notice if the text was cut.
+    from_end=True keeps the TAIL of the text (useful for deploy/build output where
+    the interesting part — errors — is at the end, not the beginning).
+
+    For agent output that should be displayed in full, prefer split_for_discord()
+    so nothing is lost — this is better for short snippets or error messages.
     """
     if len(text) <= max_chars:
         return text
     cutoff = max_chars - 50
+    if from_end:
+        omitted = len(text) - cutoff
+        return f"… [{omitted} chars omitted]\n\n" + text[-cutoff:]
     return text[:cutoff] + f"\n\n… [truncated — {len(text) - cutoff} chars omitted]"
+
+
+def split_for_discord(text: str, max_chars: int = DISCORD_MAX_CHARS) -> list[str]:
+    """
+    Split text into a list of chunks that each fit within Discord's message limit.
+
+    Prefers splitting at paragraph breaks (double newline), falls back to line
+    breaks, then hard-cuts as a last resort. Use this for agent output so long
+    responses arrive as multiple messages rather than being truncated.
+    """
+    if len(text) <= max_chars:
+        return [text]
+
+    chunks: list[str] = []
+    remaining = text
+
+    while len(remaining) > max_chars:
+        candidate = remaining[:max_chars]
+
+        # Try double newline (paragraph break) in the back half of the chunk
+        break_at = candidate.rfind("\n\n", max_chars // 2)
+        if break_at == -1:
+            # Fall back to single newline in the back half
+            break_at = candidate.rfind("\n", max_chars // 2)
+        if break_at == -1:
+            # Hard cut — no good boundary found
+            break_at = max_chars - 1
+
+        chunks.append(remaining[:break_at].rstrip())
+        remaining = remaining[break_at:].lstrip("\n")
+
+    if remaining.strip():
+        chunks.append(remaining.strip())
+
+    return [c for c in chunks if c]
 
 
 # Patterns that indicate the Anthropic API refused the request due to usage/rate limits.
@@ -169,6 +220,19 @@ _USAGE_LIMIT_PATTERNS = (
     "overloaded_error",
     "too many requests",
 )
+
+
+def is_error_output(output: str) -> bool:
+    """
+    Return True if the agent output is an error/timeout sentinel from run_agent(),
+    rather than actual agent content.
+
+    run_agent() always prefixes its own errors with [ERROR, [TIMEOUT, or [No output.
+    Real agent output never starts with those tokens.
+    Used by callers to distinguish between "Herald infrastructure failed" (show from
+    Herald bot) vs. "agent responded" (show as the agent's own identity).
+    """
+    return output.startswith(("[ERROR", "[TIMEOUT", "[No output"))
 
 
 def is_usage_limit_error(output: str) -> bool:

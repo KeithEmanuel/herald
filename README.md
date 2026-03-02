@@ -1,23 +1,63 @@
 # Herald
 
-A self-hosted multi-agent orchestration service. Herald runs Claude Code agents across multiple
-projects, coordinates token usage, and bridges async communication via Discord.
+Herald is a self-hosted multi-agent orchestration service. You give each project a Claude Code
+agent with its own name, personality, and memory. Herald runs them all from a single server,
+coordinates their token usage, and bridges everything through Discord.
 
 Each project gets an agent. Herald coordinates them all.
 
 ---
 
+## Why Herald?
+
+The gap between "I have Claude" and "Claude is reliably working on my projects" is bigger than
+it looks. Running a one-off `claude -p "..."` is easy. Getting an agent to show up every day,
+remember what it was working on, commit real changes, and wait for your approval before pushing
+— that's an infrastructure problem.
+
+Herald solves it:
+
+- **Persistent identity.** Each agent has a `SOUL.md` — a file it writes and maintains itself,
+  in the project's git repo. It survives restarts, travels across machines, and evolves over time.
+  After a few weeks, your agent has opinions. It knows the codebase. It knows you.
+
+- **Conversational, not command-line.** Talk to your agents in Discord — from your phone, from
+  the couch, from anywhere. Drop a screenshot into the channel; the agent reads it. Short replies
+  like "do it" or "just the top item" work conversationally because Herald includes recent channel
+  history as context.
+
+- **You stay in control.** Agents commit locally and wait for your 👍 before pushing to origin.
+  Nothing ships without your explicit approval — but you don't have to be at a terminal to give it.
+
+- **It stays on you.** The accountability system tracks when you last engaged with each project.
+  At 14 days of silence it nudges you. At 21 days it asks if the project is still a priority. At
+  28+ days it roasts you. You consented to this at deployment. No mercy.
+
+- **Autonomous mode.** When you're away, agents can pick items off the roadmap and implement them
+  on a configurable time budget. They still need your 👍 to push. The accountability clock is
+  untouched — autonomous runs don't pretend you're engaged.
+
+- **Deploy from Discord.** Herald can build and deploy project containers via `!deploy`. It even
+  deploys itself — `!deploy herald` rebuilds and restarts Herald while you watch in Discord.
+
+---
+
 ## What Herald Does
 
-- **Discord commands** — trigger agent runs on demand: `!run myproject <task>`
-- **Cron schedules** — agents run daily reflections, weekly blog posts, or anything you define
+- **Conversational channels** — drop a message in a project's Discord channel; the agent reads
+  it, acts on it, and replies as itself (its own name and avatar, not "Herald bot")
+- **File attachments** — attach images, screenshots, or text files to your message; the agent
+  reads them with Claude Code's Read tool
+- **Cron schedules** — daily check-ins, weekly blog posts, or any task you define per project
 - **Push approval** — agents commit locally; you approve pushes via 👍/👎 reaction in Discord
-- **Deploys** — Herald runs `docker compose up --build -d` for project containers on approval
+- **Deploys** — Herald runs `docker compose up --build -d` for project containers on command
 - **Accountability** — Herald notices when you go dark on a project and says something
 - **Per-agent identity** — each agent posts to Discord with its own name and avatar
 - **Soul creation** — Herald checks that each project has a `SOUL.md` and offers to create one
+- **Autonomous mode** — configurable time budget; agents self-assign roadmap items when you're idle
 
-One agent runs at a time, globally. This prevents rate limit collisions and makes token costs predictable.
+One agent runs at a time, globally. This prevents rate limit collisions and makes token costs
+predictable.
 
 ---
 
@@ -25,7 +65,7 @@ One agent runs at a time, globally. This prevents rate limit collisions and make
 
 - Podman (recommended) or Docker
 - A Discord server and bot token
-- A Claude subscription (or Anthropic API key)
+- A Claude subscription or Anthropic API key
 - Git repos for each project you want to run agents on
 
 **Why Podman?** Herald requires access to the host container runtime socket to deploy project
@@ -44,6 +84,7 @@ The repo lives inside it, alongside your project repos:
 HERALD_ROOT/              # e.g. /srv/herald
   compose.yaml            # your deployment config (copy from repos/herald/)
   .env                    # secrets — never committed
+  claude-auth.json        # Claude Code credentials (created on first auth)
   projects/               # private YAML configs, managed by Herald
   repos/
     herald/               # git clone of Herald (what agents edit and redeploy)
@@ -76,6 +117,7 @@ DISCORD_TOKEN=your-discord-bot-token
 ANTHROPIC_API_KEY=your-anthropic-api-key   # or use Claude subscription auth
 HERALD_ROOT=/srv/herald                    # must be absolute
 HERALD_OPERATOR_ID=your-discord-user-id   # restricts push approvals to you
+HERALD_OPERATOR_HOME=/home/yourname        # for git credentials (~/.gitconfig, ~/.ssh)
 ```
 
 For Podman rootless, also set:
@@ -83,7 +125,7 @@ For Podman rootless, also set:
 HERALD_DOCKER_SOCKET=/run/user/1000/podman/podman.sock  # replace 1000 with your UID
 ```
 
-See `repos/herald/.env.example` for all options.
+See `repos/herald/.env.example` for all options with comments.
 
 ### 3. Start Herald
 
@@ -103,18 +145,20 @@ docker compose logs -f herald
 podman compose exec herald claude   # or docker compose exec
 ```
 
-Follow the login prompt. Credentials persist across restarts via a named volume.
+Follow the login prompt. Credentials are saved to `$HERALD_ROOT/claude-auth.json`
+and bind-mounted into the container — they persist across restarts and rebuilds.
 
 ### 5. Add a project
 
 In Discord:
 
 ```
-!addproject myproject /srv/herald/repos/myproject
+!addproject myproject git@github.com:you/myproject.git AgentName
 ```
 
-Herald creates the Discord channel, sets up the webhook with the agent's avatar, writes the
-project config, and hot-reloads — no restart needed, no files to edit.
+Herald clones the repo, creates a private Discord channel, sets up the agent webhook with the
+agent's avatar (attach an image to the `!addproject` message), writes the project config, and
+hot-reloads — no restart needed.
 
 ---
 
@@ -142,13 +186,24 @@ project config, and hot-reloads — no restart needed, no files to edit.
 
 | Command | Description |
 |---|---|
-| `!addproject <name> <path> [cron]` | Register a new project — creates channel, webhook, config |
+| `!addproject <name> <repo_url> [agent_name] [#channel]` | Register a new project end-to-end |
 | `!run <project> <task>` | Trigger a one-off agent run |
-| `!deploy <project>` | Deploy the project's container |
+| `!deploy [project]` | Deploy the project's container (inferred from channel if omitted) |
+| `!push [project]` | Check for unpushed agent branches and propose a push |
+| `!cancel [project]` | Cancel the next queued (not running) task |
 | `!schedule <project> <cron>` | Set or update a project's cron schedule |
-| `!reload` | Hot-reload project configs without restarting |
+| `!autonomy <project> <on\|off\|status\|budget\|reserve>` | Manage autonomous dev mode |
+| `!webhook <project>` | Create or update the agent's Discord webhook |
+| `!reload` | Hot-reload all project configs without restarting |
 | `!status` | Queue depth and currently running job |
 | `!projects` | List registered projects and last-active time |
+
+**Plain messages** in a project channel (no `!` prefix) go directly to the agent. Herald
+includes the last several messages as context — short replies like "yes", "do it", or "start
+with the third one" work as intended.
+
+**File attachments** in project channels are downloaded and their paths injected into the task
+so the agent can read them. Drop a screenshot, a log file, or a design mockup.
 
 ---
 
@@ -160,8 +215,43 @@ When an agent run completes, Herald checks for unpushed `agent/*` branches:
 2. React 👍 → Herald pushes to origin (and auto-deploys if configured)
 3. React 👎 → branch is discarded
 
+You can also trigger a push check manually with `!push [project]`.
+
 Agents do real work — commits, refactors, file edits — without ever pushing to your remote
 without your explicit approval.
+
+---
+
+## Autonomous Development Mode
+
+Each project can be configured to run autonomously when you haven't been active recently:
+
+```yaml
+# in projects/myproject.yaml
+autonomous:
+  enabled: true
+  weekly_minutes: 210    # ~3.5 hours of wall-clock time per week
+  min_gap_hours: 20      # at least 20 hours between runs
+  max_per_day: 1         # one autonomous run per day max
+```
+
+Before queuing anything, Herald runs a pre-flight checklist in Python (no agent calls):
+- Is autonomous mode enabled?
+- Does the project have `SOUL.md`?
+- Are there unchecked items in the roadmap?
+- Is the weekly budget not exhausted?
+- Has the daily cap not been hit?
+- Is the minimum gap since the last run satisfied?
+- Has the operator been inactive for at least 24 hours?
+
+If all checks pass, the agent picks one roadmap item, implements it, and commits. The push
+approval flow handles the rest. Manage it in Discord:
+
+```
+!autonomy myproject on 180     # enable with a 3-hour weekly budget
+!autonomy myproject status     # show this week's stats and pre-flight result
+!autonomy myproject off        # disable
+```
 
 ---
 
@@ -175,7 +265,7 @@ name: myproject
 display_name: "My Project"
 path: /srv/herald/repos/myproject    # must be under HERALD_ROOT/repos/
 discord_channel_id: "123456789"
-agent_avatar: argent.png             # PNG in the project repo root
+agent_name: "Argent"                 # shown in Discord as the webhook username
 
 git:
   push_requires_approval: true
@@ -188,6 +278,10 @@ schedule:
   - cron: "0 8 * * *"
     task: >
       Read SOUL.md and MEMORY.md. Reflect on project status...
+
+autonomous:
+  enabled: false
+  weekly_minutes: 210
 ```
 
 ---
@@ -211,6 +305,9 @@ the project agent. Herald checks for this on startup and offers to create one if
 SOUL.md lives in the project's git repo — it survives container restarts, travels across
 machines, and evolves via the normal push-approval flow. It's readable by humans.
 
+Write a `humans/<yourname>.md` profile in your project before the first soul bootstrap — the
+agent uses it to pick a name and personality that fits the project and operator.
+
 See `docs/agent-pattern.md` for the full agent identity pattern.
 
 ---
@@ -220,6 +317,11 @@ See `docs/agent-pattern.md` for the full agent identity pattern.
 Herald requires access to the container runtime socket. **Use Podman rootless** if possible —
 it limits a container escape to user-level access rather than root. See `docs/spec.md` for
 the full threat model and Podman setup instructions.
+
+**Permissions:** Herald runs Claude Code as root inside the container. Tool use permissions are
+granted via `permissions.allow` in Claude Code's settings (seeded by `docker-entrypoint.sh` on
+startup) — the `--dangerously-skip-permissions` CLI flag is intentionally not used because the
+Claude Code CLI blocks it for root users.
 
 ---
 

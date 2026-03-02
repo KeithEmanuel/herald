@@ -1,0 +1,31 @@
+# Herald watchdog — systemd user service
+#
+# Restarts Herald after self-deploys (!deploy herald) and unexpected crashes.
+# Herald's container is killed mid-deploy when it rebuilds itself; this service
+# detects the outage and runs `podman compose up -d` to start the new container.
+#
+# Installation (one-time, as the operator user):
+#   mkdir -p ~/.config/systemd/user
+#   # Edit WorkingDirectory and ExecStart below to match your HERALD_ROOT
+#   cp herald-watchdog.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now herald-watchdog.service
+#
+# Verify:
+#   systemctl --user status herald-watchdog
+#   journalctl --user -u herald-watchdog -f
+
+[Unit]
+Description=Herald watchdog — restarts Herald after self-deploys
+After=default.target
+
+[Service]
+Type=simple
+# Set this to your HERALD_ROOT (the directory containing compose.yaml and .env)
+WorkingDirectory=/mnt/lvm-nvme/herald
+ExecStart=/mnt/lvm-nvme/herald/watchdog.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
