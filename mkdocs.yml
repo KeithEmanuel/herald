@@ -42,6 +42,7 @@ nav:
     - Spec: spec.md
     - Agent Pattern: agent-pattern.md
     - Roadmap: roadmap.md
+    - Changelog: changelog.md
   - Blog: blog/index.md
 
 markdown_extensions:

@@ -137,6 +137,10 @@ class ProjectConfig(BaseModel):
     # Optional autonomous development mode
     autonomous: AutonomousConfig = AutonomousConfig()
 
+    # Project type — controls which template variant is used during scaffolding
+    # and informs the agent's task framing. One of: poc, solo, open_source, team, enterprise.
+    project_type: str = "solo"
+
     @field_validator("path")
     @classmethod
     def path_must_exist(cls, v: str) -> str:

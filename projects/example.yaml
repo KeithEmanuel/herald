@@ -8,6 +8,11 @@
 name: myproject
 display_name: "My Project"
 
+# Project type — shapes which template files are scaffolded at !addproject time and
+# informs the agent's task framing. Options: poc, solo, open_source, team, enterprise.
+# Defaults to "solo" if omitted.
+project_type: solo
+
 # Absolute path to the project repo inside the Herald container.
 # Project repos live under HERALD_ROOT/repos/ and are mounted at the same path.
 # Use !addproject to register automatically — or fill this in manually.

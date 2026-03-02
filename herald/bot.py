@@ -998,7 +998,8 @@ class HeraldCommands(commands.Cog, name="Herald"):
         log.info("Project '%s' added via !addproject, active immediately", name)
 
         # --- Step 6: Scaffold Herald framework files if missing ---
-        scaffolded = await self.bot._scaffold_project_files(repo_path, display_name)
+        project_type = self.bot.projects[name].project_type
+        scaffolded = await self.bot._scaffold_project_files(repo_path, display_name, project_type)
         if scaffolded:
             await ctx.send(
                 f"Scaffolded: {', '.join(scaffolded)} — template placeholders will be "
@@ -1121,7 +1122,9 @@ class HeraldBot(commands.Bot):
         # Check that each project has a .herald/SOUL.md — a project without a soul is just files.
         await self._check_project_souls()
 
-    async def _scaffold_project_files(self, repo_path: Path, display_name: str) -> list[str]:
+    async def _scaffold_project_files(
+        self, repo_path: Path, display_name: str, project_type: str = "solo"
+    ) -> list[str]:
         """
         Copy Herald framework template files into a project repo if they don't exist.
 
@@ -1129,20 +1132,28 @@ class HeraldBot(commands.Bot):
         directory containing MEMORY.md and humans/ with operator profiles copied from
         Herald's own .herald/humans/ directory — so the new agent knows who they're
         working with from the first bootstrap run.
+
+        Type-specific templates are used when available (templates/<project_type>/);
+        falls back to the base templates/ directory if no type-specific variant exists.
         Only touches files that are missing — existing files are never overwritten.
 
         Commits any newly created files to the repo so they persist.
         Returns a list of file paths that were scaffolded.
         """
         templates_dir = Path(__file__).parent.parent / "templates"
+        # Type-specific templates override base templates when present
+        type_templates_dir = templates_dir / project_type
         herald_dir = repo_path / ".herald"
         herald_dir.mkdir(exist_ok=True)
         scaffolded: list[str] = []
 
         # CLAUDE.md stays at the repo root — Claude Code auto-discovers it there.
+        # Use type-specific template if available, fall back to base template.
         claude_dest = repo_path / "CLAUDE.md"
         if not claude_dest.exists():
-            template_path = templates_dir / "CLAUDE.md"
+            template_path = type_templates_dir / "CLAUDE.md"
+            if not template_path.exists():
+                template_path = templates_dir / "CLAUDE.md"
             if template_path.exists():
                 content = template_path.read_text().replace("[Project Name]", display_name)
                 claude_dest.write_text(content)
@@ -1151,7 +1162,9 @@ class HeraldBot(commands.Bot):
         # MEMORY.md goes into .herald/ — it's a Herald framework file, not a project artifact.
         memory_dest = herald_dir / "MEMORY.md"
         if not memory_dest.exists():
-            template_path = templates_dir / "MEMORY.md"
+            template_path = type_templates_dir / "MEMORY.md"
+            if not template_path.exists():
+                template_path = templates_dir / "MEMORY.md"
             if template_path.exists():
                 content = template_path.read_text().replace("[Project Name]", display_name)
                 memory_dest.write_text(content)

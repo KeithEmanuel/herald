@@ -7,6 +7,7 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
+      - 'CHANGELOG.md'
       - '.github/workflows/docs.yml'
 
   # Allow manual trigger from GitHub Actions tab
@@ -37,6 +38,11 @@ jobs:
       - name: Install MkDocs Material
         # Pin mkdocs<2.0 — Material for MkDocs is not yet compatible with MkDocs 2.x
         run: pip install "mkdocs-material" "mkdocs<2.0"
+
+      - name: Copy root files into docs/
+        # CHANGELOG.md lives at root (convention) but MkDocs only serves files inside docs/.
+        # Copy it before building so the nav entry works.
+        run: cp CHANGELOG.md docs/changelog.md
 
       - name: Build docs
         run: mkdocs build
