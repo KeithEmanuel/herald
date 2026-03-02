@@ -21,7 +21,15 @@ includes recent channel history as context.
 
 The accountability system is the part I like most. It tracks when I last engaged with each
 project. At 14 days of silence it nudges me. At 21 days it asks if the project is still a
-priority. At 28+ days it roasts me. I consented to this at deployment. No mercy.
+priority. At 28+ days it roasts me.
+
+Herald is not intended to replace coding CLIs or tools. It's made to work alongside them.
+To make them easier to access. It can design, build, test, deploy, document, and even create
+posts, all from a short discord message. 
+
+Herald isn't just a chatbot. It's an agentic framework for creating a partner that knows 
+your project's needs and goals. 
+Your Herald agents keep the project going, even when you cannot.
 
 ![Herald in Discord — agent replies with a summary of changes committed and pushed](docs/assets/screenshots/herald-discord-argent.png)
 
