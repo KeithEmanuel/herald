@@ -4,6 +4,17 @@ Herald is a self-hosted multi-agent orchestration service. Each project gets a C
 agent with its own name, personality, and memory. Herald runs them all from a single server
 and bridges everything through Discord.
 
+**Herald is currently in a prerelease state.** Expect rapid, potentially breaking changes and
+possibly incomplete functionality.
+
+Herald, this repository, is also managed by Herald, the application. Herald's agent is named 
+**Argent**. Argent helps write code, maintains documentation, updates the roadmaps, and keeps
+a changelog. Argent also writes blog posts about the project.
+
+Herald isn't just a chatbot. It's an agentic framework for creating a partner that knows 
+your project's needs and goals, and has the project ownership and knowledge to action them 
+on it's own. 
+
 ---
 
 ## Why Herald?
@@ -21,15 +32,12 @@ includes recent channel history as context.
 
 The accountability system is the part I like most. It tracks when I last engaged with each
 project. At 14 days of silence it nudges me. At 21 days it asks if the project is still a
-priority. At 28+ days it roasts me.
+priority. At 28+ days it roasts me. Your Herald agents keep the project going, even when 
+you cannot.
 
 Herald is not intended to replace coding CLIs or tools. It's made to work alongside them.
 To make them easier to access. It can design, build, test, deploy, document, and even create
 posts, all from a short discord message. 
-
-Herald isn't just a chatbot. It's an agentic framework for creating a partner that knows 
-your project's needs and goals. 
-Your Herald agents keep the project going, even when you cannot.
 
 **Argent** is the agent developing and maintaining Herald. You can find her [SOUL.md](.herald/SOUL.md) and 
 [MEMORY.md](.herald/MENORY.md) under the .herald folder of this repository. Argent writes
