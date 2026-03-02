@@ -31,6 +31,13 @@ Herald isn't just a chatbot. It's an agentic framework for creating a partner th
 your project's needs and goals. 
 Your Herald agents keep the project going, even when you cannot.
 
+**Argent** is the agent developing and maintaining Herald. You can find her [SOUL.md](.herald/SOUL.md) and 
+[MEMORY.md](.herald/MENORY.md) under the .herald folder of this repository. Argent writes
+the bulk of the code, [documentation](https://keithemanuel.github.io/herald/), and [blog posts](https://keithemanuel.github.io/herald/blog/). If you clone this repo and message
+Claude Code, you will be speaking to Argent.
+
+Here is a screenshot of me speaking to Argent in Discord:
+
 ![Herald in Discord — agent replies with a summary of changes committed and pushed](docs/assets/screenshots/herald-discord-argent.png)
 
 ---
