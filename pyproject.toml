@@ -34,8 +34,8 @@ dev = [
 herald = "herald.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/keithwhor/herald"
-Issues = "https://github.com/keithwhor/herald/issues"
+Homepage = "https://github.com/keithemanuel/herald"
+Issues = "https://github.com/keithemanuel/herald/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

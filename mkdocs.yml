@@ -1,8 +1,8 @@
 site_name: Herald
 site_description: A self-hosted, open source multi-agent orchestration service
-site_url: https://keithwhor.github.io/herald
-repo_url: https://github.com/keithwhor/herald
-repo_name: keithwhor/herald
+site_url: https://keithemanuel.github.io/herald
+repo_url: https://github.com/keithemanuel/herald
+repo_name: keithemanuel/herald
 
 theme:
   name: material
