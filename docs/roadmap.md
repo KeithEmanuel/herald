@@ -63,8 +63,9 @@ These complete the core experience before going public.
 - [x] **Usage limit handling** — scheduled tasks skip silently when API rate/quota limits are
       hit (log warning only). Interactive runs still surface the error.
 
-- [ ] **Discord embed formatting** — push proposals and run summaries should use Discord embeds
-      (fields, colors, timestamp) rather than plain text code blocks.
+- [x] **Discord embed formatting** — push proposals, push approved/failed/discarded, and deploy
+      results use Discord embeds (fields, colors, timestamp). Color coding: yellow = awaiting
+      decision, green = success, red = failure, dark grey = cancelled.
 
 - [x] **Test suite** — `tests/test_queue.py` (serial invariant, task ordering, duration tracking),
       `tests/test_config.py` (YAML validation + AutonomousConfig), `tests/test_autonomy.py`
