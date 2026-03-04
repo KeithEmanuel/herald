@@ -435,10 +435,21 @@ class HeraldCommands(commands.Cog, name="Herald"):
         # Fetch recent channel history so the agent has conversation context.
         # This is what lets the agent understand short replies like "yes" or "actually,
         # make it dark mode instead" — it can see what it said in previous messages.
+        # Wrapped in try/except: if channel permissions were changed (e.g. by syncing with a
+        # category after !addproject created the channel), the bot may have lost
+        # read_message_history — don't let that silently kill the entire on_message handler.
         recent: list[discord.Message] = []
-        async for msg in channel.history(limit=15, before=message, oldest_first=False):
-            recent.append(msg)
-        recent.reverse()  # oldest first so it reads like a conversation
+        try:
+            async for msg in channel.history(limit=15, before=message, oldest_first=False):
+                recent.append(msg)
+            recent.reverse()  # oldest first so it reads like a conversation
+        except discord.Forbidden:
+            log.warning(
+                "No read_message_history permission in #%s — proceeding without context. "
+                "Check channel permissions and ensure the Herald bot has view_channel and "
+                "read_message_history in that channel.",
+                channel.name,
+            )
 
         context_lines = []
         for msg in recent:
@@ -923,10 +934,30 @@ class HeraldCommands(commands.Cog, name="Herald"):
                         send_messages=True,
                         read_message_history=True,
                     )
+            # Find or create a "Herald Agents" category to keep agent channels grouped and
+            # prevent permission drift. Channels under a category can have their permissions
+            # "synced" by Discord when moved, which strips the bot's explicit overwrites.
+            # Putting channels in a Herald-managed category avoids this risk going forward.
+            # (Existing channels from older !addproject runs are unaffected.)
+            category: discord.CategoryChannel | None = discord.utils.get(
+                guild.categories, name="Herald Agents"
+            )
+            if category is None:
+                try:
+                    category = await guild.create_category(
+                        "Herald Agents",
+                        overwrites=overwrites,
+                    )
+                except Exception:
+                    log.warning(
+                        "Could not create 'Herald Agents' category — creating channel without category"
+                    )
+                    category = None
             try:
                 channel = await guild.create_text_channel(
                     name=agent_name.lower(),
                     overwrites=overwrites,
+                    category=category,
                     topic=f"{agent_name} — agent for {display_name}, managed by Herald",
                 )
             except discord.Forbidden:
