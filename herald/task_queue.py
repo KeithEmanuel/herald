@@ -125,6 +125,24 @@ class TaskQueue:
         """The task currently being executed, or None if idle."""
         return self._current
 
+    @property
+    def pending(self) -> list[AgentTask]:
+        """
+        Snapshot of queued tasks in arrival order (not including the running one).
+
+        Safe to call at any point — returns a list copy so callers can't mutate
+        the internal queue. Implemented the same way as cancel(): drain then re-enqueue.
+        """
+        items: list[AgentTask] = []
+        while not self._queue.empty():
+            try:
+                items.append(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        for item in items:
+            self._queue.put_nowait(item)
+        return list(items)
+
     async def worker(self, projects: Any, run_fn: Any) -> None:
         """
         Long-running queue consumer. Call as an asyncio background task.

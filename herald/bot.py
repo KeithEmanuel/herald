@@ -10,6 +10,7 @@ Commands:
   !push [project]                                    — check for unpushed agent branches and propose a push
   !cancel [project]                                  — cancel next queued (not running) task for a project
   !status                                            — show queue depth and running job
+  !queue                                             — show full task queue (running + all pending)
   !projects                                          — list registered projects
   !webhook <project>                                 — create/update agent webhook
   !schedule <project> <cron>                         — set cron schedule
@@ -158,6 +159,24 @@ class HeraldCommands(commands.Cog, name="Herald"):
             lines.append(f"**Running:** `[{current.project_name}]` {current.label}")
         if depth > 0:
             lines.append(f"**Queued:** {depth} task(s) waiting")
+
+        await ctx.send("\n".join(lines))
+
+    @commands.command(name="queue")
+    async def cmd_queue(self, ctx: commands.Context) -> None:
+        """!queue — show the full task queue: running task plus all pending tasks in order."""
+        current = self.bot.task_queue.current
+        pending = self.bot.task_queue.pending
+
+        if current is None and not pending:
+            await ctx.send("Herald is idle — queue is empty.")
+            return
+
+        lines = []
+        if current:
+            lines.append(f"**[NOW]** `[{current.project_name}]` {current.label}")
+        for i, task in enumerate(pending, start=1):
+            lines.append(f"**[{i}]** `[{task.project_name}]` {task.label}")
 
         await ctx.send("\n".join(lines))
 

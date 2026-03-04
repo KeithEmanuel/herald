@@ -317,3 +317,63 @@ async def test_worker_handles_str_return_from_default_run_fn():
 
     assert task.tokens_used == 0
     on_complete.assert_awaited_once_with("plain string output")
+
+
+def test_pending_empty_queue():
+    """pending returns [] when nothing is enqueued."""
+    queue = TaskQueue()
+    assert queue.pending == []
+
+
+def test_pending_returns_tasks_in_fifo_order():
+    """pending returns all enqueued tasks in arrival order without consuming them."""
+    queue = TaskQueue()
+    a = make_task("a")
+    b = make_task("b")
+    c = make_task("c")
+    queue.enqueue(a)
+    queue.enqueue(b)
+    queue.enqueue(c)
+
+    snapshot = queue.pending
+    assert [t.project_name for t in snapshot] == ["a", "b", "c"]
+
+
+def test_pending_does_not_remove_tasks():
+    """Calling pending() twice must return the same tasks — it's non-destructive."""
+    queue = TaskQueue()
+    queue.enqueue(make_task("x"))
+    queue.enqueue(make_task("y"))
+
+    first = queue.pending
+    second = queue.pending
+    assert [t.project_name for t in first] == ["x", "y"]
+    assert [t.project_name for t in second] == ["x", "y"]
+    assert queue.depth == 2
+
+
+def test_cancel_removes_first_match():
+    """cancel() removes the first pending task for the given project."""
+    queue = TaskQueue()
+    a = make_task("a")
+    b = make_task("b")
+    c = make_task("a")
+    queue.enqueue(a)
+    queue.enqueue(b)
+    queue.enqueue(c)
+
+    removed = queue.cancel("a")
+    assert removed is True
+    # Second "a" should still be there
+    names = [t.project_name for t in queue.pending]
+    assert names == ["b", "a"]
+
+
+def test_cancel_returns_false_when_no_match():
+    """cancel() returns False when no pending task matches the project name."""
+    queue = TaskQueue()
+    queue.enqueue(make_task("alpha"))
+
+    removed = queue.cancel("nonexistent")
+    assert removed is False
+    assert queue.depth == 1  # original task still there
